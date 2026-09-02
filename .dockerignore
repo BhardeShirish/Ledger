@@ -1,0 +1,24 @@
+# Keeps the build context small and, more importantly, keeps real records
+# out of the image. server/data holds the live database, uploads and the
+# session key.
+server/data/
+data/
+.env
+*.log
+
+web/node_modules/
+web/dist/
+node_modules/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+server/.pytest_cache/
+server/tests/.tmp*/
+web/tsconfig.tsbuildinfo
+
+.git/
+.github/
+Ledger-*.zip
+setup/
+*.md

@@ -1,0 +1,76 @@
+"""Master lists: expense categories and money display config."""
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from ..db import get_db
+from ..models import ExpenseCategory, User
+from ..security import current_user, require_owner
+
+router = APIRouter(prefix="/lists", tags=["lists"])
+
+
+class CategoryIn(BaseModel):
+    name: str
+
+
+DEFAULT_CATEGORIES = [
+    "Raw Material", "Vegetables & Fruits", "Dairy", "Meat & Fish",
+    "Groceries", "Gas Cylinder", "Electricity", "Water",
+    "Rent", "Internet & Phone", "Repairs & Maintenance",
+    "Packaging", "Fuel & Transport", "Marketing", "Staff Welfare",
+    "Licenses & Fees", "Cleaning", "Misc",
+]
+
+
+@router.get("/categories")
+def categories(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = (db.query(ExpenseCategory)
+              .order_by(ExpenseCategory.sort, ExpenseCategory.name).all())
+    return [{"id": c.id, "name": c.name, "is_active": c.is_active} for c in rows]
+
+
+@router.post("/categories", status_code=201)
+def add_category(body: CategoryIn, user: User = Depends(current_user),
+                 db: Session = Depends(get_db)):
+    name = body.name.strip()
+    existing = db.query(ExpenseCategory).filter(func.lower(ExpenseCategory.name) == name.lower()).first()
+    if existing:
+        return {"id": existing.id, "name": existing.name, "is_active": True}
+    sort = (db.query(func.max(ExpenseCategory.sort)).scalar() or 0) + 10
+    c = ExpenseCategory(name=name, sort=sort)
+    db.add(c)
+    db.commit()
+    return {"id": c.id, "name": c.name, "is_active": True}
+
+
+@router.delete("/categories/{category_id}")
+def deactivate_category(category_id: int, user: User = Depends(require_owner),
+                        db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    c = db.get(ExpenseCategory, category_id)
+    if c is None:
+        raise HTTPException(404, "Not found")
+    c.is_active = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/money-config")
+def money_config(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Currency display + denomination list for the note calculator. Any role."""
+    from ..audit import get_setting_db
+
+    def denoms():
+        v = get_setting_db(db, "denominations", None)
+        return v if isinstance(v, list) and v else [500, 200, 100, 50, 20, 10, 5, 2, 1]
+
+    return {
+        "code": get_setting_db(db, "currency_code", "INR"),
+        "symbol": get_setting_db(db, "currency_symbol", "₹"),
+        "locale": get_setting_db(db, "currency_locale", "en-IN"),
+        "denominations": sorted({int(d) for d in denoms()}, reverse=True),
+        "timezone": get_setting_db(db, "timezone_name", "Asia/Kolkata"),
+        "restaurant_name": get_setting_db(db, "restaurant_name", "Ootaa Ledger"),
+    }

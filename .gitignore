@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+server/.pytest_cache/
+server/tests/.tmp*/
+server/data/
+data/
+web/node_modules/
+web/dist/
+web/.pytest_cache/
+web/tsconfig.tsbuildinfo
+.env
+*.log
+test_bill.png
+Ledger-*.zip
+
+# Real business data used while developing — never publish
+References/

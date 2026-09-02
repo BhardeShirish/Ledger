@@ -1,0 +1,40 @@
+# Ootaa Ledger — start with:  docker compose up -d
+#
+# First run needs an owner password of at least 12 characters. Put it in a
+# .env file next to this one (copy .env.example), so it never reaches the
+# shell history or a git commit.
+
+services:
+  ledger:
+    build: .
+    image: ootaa-ledger:latest
+    container_name: ootaa-ledger
+    restart: unless-stopped
+
+    environment:
+      # Required on first run only; it creates the owner account.
+      LEDGER_OWNER_PASSWORD: ${LEDGER_OWNER_PASSWORD:?set LEDGER_OWNER_PASSWORD in .env (12+ characters)}
+      LEDGER_OWNER_USER: ${LEDGER_OWNER_USER:-owner}
+      # Set to 1 to fill an empty ledger with sample data for a look around.
+      LEDGER_DEMO_SEED: ${LEDGER_DEMO_SEED:-0}
+      TZ: ${TZ:-Asia/Kolkata}
+
+    # 127.0.0.1 by default: reachable from this computer only. To use Ledger
+    # from your phone, prefer a private network (Tailscale) and set
+    # LEDGER_BIND=0.0.0.0 only if you understand who else is on your Wi-Fi.
+    ports:
+      - "${LEDGER_BIND:-127.0.0.1}:${LEDGER_PORT:-8080}:8080"
+
+    # Your records live in a named volume that Docker manages. A bind mount
+    # such as ./data:/data looks friendlier, but on Linux the host folder is
+    # created owned by root and the non-root user in the image cannot write to
+    # it, so the very first run fails. Named volumes take their ownership from
+    # the image and behave the same on Windows, macOS and Linux.
+    #
+    # To copy your records out:
+    #   docker cp ootaa-ledger:/data ./ledger-backup
+    volumes:
+      - ledger-data:/data
+
+volumes:
+  ledger-data:

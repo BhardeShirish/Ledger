@@ -1,0 +1,16 @@
+fastapi==0.136.3
+uvicorn[standard]==0.49.0
+sqlalchemy==2.0.51
+pydantic==2.12.5
+openpyxl==3.1.5
+# Reads the legacy .xls (BIFF) statements some banks still hand out.
+# openpyxl cannot open them, and bank downloads named .xls that are really
+# CSV or HTML are handled without it - this is only for genuine old Excel.
+xlrd==2.0.2
+pyjwt==2.13.0
+python-multipart==0.0.32
+httpx==0.28.1
+# Windows ships no IANA timezone database, so zoneinfo cannot resolve
+# Asia/Kolkata without this. app/util.py builds ZoneInfo at import time,
+# so a machine without it cannot start Ledger at all.
+tzdata==2025.3

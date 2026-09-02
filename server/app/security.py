@@ -1,0 +1,219 @@
+import hashlib
+import hmac
+import os
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import jwt
+from fastapi import Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+
+from .config import (
+    LOCKOUT_MINUTES,
+    MAX_FAILED_LOGINS,
+    REMEMBER_TTL_DAYS,
+    SECRET_KEY,
+    STEPUP_TTL_MINUTES,
+    TOKEN_TTL_HOURS,
+)
+from .db import get_db
+from .models import AuthSession, User
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _future(value: datetime | None) -> bool:
+    if value is None:
+        return False
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value > _utcnow()
+
+
+# Password hashing
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
+    return f"scrypt${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        _algo, salt_hex, dk_hex = stored.split("$")
+        dk = hashlib.scrypt(
+            password.encode(),
+            salt=bytes.fromhex(salt_hex),
+            n=2**14,
+            r=8,
+            p=1,
+            dklen=32,
+        )
+        return hmac.compare_digest(dk.hex(), dk_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+# Durable authentication sessions
+
+def make_token(
+    user_id: int, db: Session, remember: bool = False
+) -> tuple[str, str, datetime]:
+    now = _utcnow()
+    expires = now + (
+        timedelta(days=REMEMBER_TTL_DAYS)
+        if remember
+        else timedelta(hours=TOKEN_TTL_HOURS)
+    )
+    session_id = uuid.uuid4().hex
+    csrf_token = secrets.token_urlsafe(32)
+    db.add(AuthSession(
+        id=session_id,
+        user_id=user_id,
+        csrf_hash=hashlib.sha256(csrf_token.encode()).hexdigest(),
+        expires_at=expires,
+    ))
+    token = jwt.encode(
+        {
+            "sub": str(user_id),
+            "sid": session_id,
+            "exp": expires.replace(tzinfo=timezone.utc),
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+    return token, csrf_token, expires
+
+
+def parse_token(token: str) -> dict | None:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        int(payload["sub"])
+        if not payload.get("sid"):
+            return None
+        return payload
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _request_token(request: Request) -> tuple[str, bool]:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:], False
+    cookie = request.cookies.get("ledger_token")
+    if cookie:
+        return cookie, True
+    raise HTTPException(401, "Not signed in")
+
+
+def _check_csrf(request: Request, session: AuthSession) -> None:
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    cookie = request.cookies.get("ledger_csrf", "")
+    header = request.headers.get("X-CSRF-Token", "")
+    supplied_hash = hashlib.sha256(header.encode()).hexdigest()
+    if not cookie or not header or not hmac.compare_digest(cookie, header):
+        raise HTTPException(403, "Invalid CSRF token")
+    if not hmac.compare_digest(session.csrf_hash, supplied_hash):
+        raise HTTPException(403, "Invalid CSRF token")
+
+
+def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    token, cookie_auth = _request_token(request)
+    payload = parse_token(token)
+    if payload is None:
+        raise HTTPException(401, "Session expired")
+    session = db.get(AuthSession, payload["sid"])
+    user_id = int(payload["sub"])
+    if (
+        session is None
+        or session.user_id != user_id
+        or session.revoked_at is not None
+        or not _future(session.expires_at)
+    ):
+        raise HTTPException(401, "Session expired")
+    if cookie_auth:
+        _check_csrf(request, session)
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(401, "Account disabled")
+    if _future(user.locked_until):
+        raise HTTPException(423, "Account temporarily locked. Try later.")
+    request.state.auth_session = session
+    user._auth_session = session
+    return user
+
+
+def require_owner(user: User = Depends(current_user)) -> User:
+    if user.role != "owner":
+        raise HTTPException(403, "Owner access required")
+    return user
+
+
+def has_stepup(user: User) -> bool:
+    session = getattr(user, "_auth_session", None)
+    return session is not None and _future(session.elevated_until)
+
+
+def grant_stepup(user: User, db: Session) -> datetime:
+    session = getattr(user, "_auth_session", None)
+    if session is None:
+        raise HTTPException(401, "Session expired")
+    session.elevated_until = _utcnow() + timedelta(minutes=STEPUP_TTL_MINUTES)
+    db.commit()
+    return session.elevated_until
+
+
+def revoke_stepup(user: User, db: Session) -> None:
+    session = getattr(user, "_auth_session", None)
+    if session is not None:
+        session.elevated_until = None
+        db.commit()
+
+
+def revoke_session(user: User, db: Session) -> None:
+    session = getattr(user, "_auth_session", None)
+    if session is not None and session.revoked_at is None:
+        session.revoked_at = _utcnow()
+        session.elevated_until = None
+        db.commit()
+
+
+def revoke_other_sessions(user: User, db: Session) -> None:
+    current = getattr(user, "_auth_session", None)
+    q = db.query(AuthSession).filter(
+        AuthSession.user_id == user.id,
+        AuthSession.revoked_at.is_(None),
+    )
+    if current is not None:
+        q = q.filter(AuthSession.id != current.id)
+    now = _utcnow()
+    for session in q.all():
+        session.revoked_at = now
+        session.elevated_until = None
+
+
+def require_stepup(user: User = Depends(current_user)) -> User:
+    if user.role != "owner":
+        raise HTTPException(403, "Owner access required")
+    if not has_stepup(user):
+        raise HTTPException(428, "Password re-verification required")
+    return user
+
+
+def register_failed_login(user: User, db: Session) -> None:
+    user.failed_attempts += 1
+    if user.failed_attempts >= MAX_FAILED_LOGINS:
+        user.locked_until = _utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        user.failed_attempts = 0
+    db.commit()
+
+
+def clear_lock(user: User, db: Session) -> None:
+    if _future(user.locked_until):
+        raise HTTPException(423, "Account temporarily locked. Try later.")
+    user.locked_until = None
+    db.commit()
