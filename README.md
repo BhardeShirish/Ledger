@@ -62,14 +62,50 @@ On a brand-new PC use `Install-Ledger-New-PC.cmd` — it installs Python if
 needed, registers Ledger to start at logon, and prints the first-run owner
 password. Change it in Settings → account after signing in.
 
-### Docker (Linux, macOS, or a NAS)
+### Docker (Linux, macOS, Windows, or a NAS)
+
+Docker is the only thing you need — no Node, no Python, no build tools, and
+no need to clone this repository. Pick a strong password and run:
+
+```bash
+docker run -d --name ootaa-ledger \
+  -p 127.0.0.1:8080:8080 \
+  -v ledger-data:/data \
+  -e LEDGER_OWNER_PASSWORD='choose-a-long-password' \
+  --restart unless-stopped \
+  ghcr.io/OWNER/REPO:latest
+```
+
+Then open <http://localhost:8080>. Images are published for **linux/amd64 and
+linux/arm64**, so the same command works on an Intel or Apple Silicon Mac, a
+Linux box, or a Raspberry Pi left running in the shop.
+
+Prefer a file you can edit? Clone the repo and use compose instead — this
+builds the image locally, which does need an internet connection the first
+time:
 
 ```bash
 cp .env.example .env          # LEDGER_OWNER_PASSWORD is required
 docker compose up -d
 ```
 
-Records live in the `ledger-data` volume, not in the image, so rebuilding or
+#### Moving it to a machine with no internet
+
+Export the image to a file, carry it over on a USB stick, and load it there.
+The target machine needs Docker and nothing else:
+
+```bash
+# on a machine that has the image
+docker save ghcr.io/OWNER/REPO:latest | gzip > ledger-image.tar.gz   # ~115 MB
+
+# on the target machine
+gunzip -c ledger-image.tar.gz | docker load
+docker run -d --name ootaa-ledger -p 127.0.0.1:8080:8080 \
+  -v ledger-data:/data -e LEDGER_OWNER_PASSWORD='choose-a-long-password' \
+  --restart unless-stopped ghcr.io/OWNER/REPO:latest
+```
+
+Records live in the `ledger-data` volume, not in the image, so replacing or
 upgrading the container never touches your data. To take a copy off the
 machine:
 
@@ -78,9 +114,13 @@ docker cp ootaa-ledger:/data ./ledger-backup
 ```
 
 The image runs as a non-root user (uid 10001) and only needs `/data` to be
-writable. It is built and smoke-tested on every push by CI, and `docker compose`
-refuses to start at all if `LEDGER_OWNER_PASSWORD` is missing or too short —
-better a loud restart loop than a box on the internet with a weak password.
+writable. CI builds it, pushes it, then pulls the published image back down
+and fails the run unless it actually serves the app. `docker compose` refuses
+to start at all if `LEDGER_OWNER_PASSWORD` is missing or too short — better a
+loud restart loop than a box on the internet with a weak password.
+
+> Replace `OWNER/REPO` with your GitHub path once you have pushed this
+> repository; that is where the publish workflow puts the image.
 
 ---
 

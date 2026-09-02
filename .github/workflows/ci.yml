@@ -40,8 +40,9 @@ jobs:
         working-directory: web
 
   docker:
-    # The image cannot be built on the maintainer's Windows machine, so this
-    # job is the only thing standing between the Dockerfile and bit rot.
+    # The image is built and smoke-tested here on every change. It has also
+    # been verified by hand (build, run non-root, persist across a container
+    # replace, and an offline save/load transfer).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
