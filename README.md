@@ -77,9 +77,10 @@ machine:
 docker cp ootaa-ledger:/data ./ledger-backup
 ```
 
-> The Dockerfile has not been built on the author's machine (no Docker engine
-> there). If it misbehaves, please open an issue — it is the one path here that
-> has not been exercised end to end.
+The image runs as a non-root user (uid 10001) and only needs `/data` to be
+writable. It is built and smoke-tested on every push by CI, and `docker compose`
+refuses to start at all if `LEDGER_OWNER_PASSWORD` is missing or too short —
+better a loud restart loop than a box on the internet with a weak password.
 
 ---
 

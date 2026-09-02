@@ -45,7 +45,7 @@ export default function InventoryWastage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <SectionLabel>Wastage · this month</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">

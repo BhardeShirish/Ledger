@@ -277,8 +277,9 @@ export default function Layout() {
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-rule bg-paper/95 px-4 py-2.5 backdrop-blur md:px-8">
           <div className="md:hidden">
             <select
+              aria-label="Switch outlet"
               value={outletId} onChange={(e) => pick(Number(e.target.value))}
-              className="rounded-md bg-paper-3 px-2 py-1 text-sm font-semibold">
+              className="min-h-11 rounded-md bg-paper-3 px-2 py-1 text-sm font-semibold">
               {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </div>
@@ -293,7 +294,7 @@ export default function Layout() {
             )}
             <LockHint />
             <button onClick={() => nav("/settings/account")}
-                    className="rounded-full bg-paper-3 px-3 py-1.5 text-sm font-medium">
+                    className="inline-flex min-h-11 items-center rounded-full bg-paper-3 px-3 py-1.5 text-sm font-medium">
               {me.full_name || me.username}
             </button>
           </div>

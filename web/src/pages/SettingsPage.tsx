@@ -121,7 +121,7 @@ function OcrCard() {
             <button key={p.name} onClick={() => setF({
               enabled: true, provider: "openai_compat",
               base_url: p.base, model: p.model,
-            })} className="rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-semibold text-accent">
+            })} className="min-h-11 rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-semibold text-accent sm:min-h-0">
               Use {p.name}
             </button>
           ))}
@@ -252,7 +252,7 @@ function MoneyCard() {
             currency_symbol: code === "INR" ? "₹" : code === "USD" ? "$" : code === "EUR" ? "€" : code === "GBP" ? "£" : code === "AED" ? "د.إ" : code,
             currency_locale: code === "INR" ? "en-IN" : "en-US",
             denominations: list.join(", "),
-          })} className="rounded-full border border-rule-strong px-2.5 py-1 text-xs hover:bg-paper-3">
+          })} className="min-h-11 rounded-full border border-rule-strong px-2.5 py-1 text-xs hover:bg-paper-3 sm:min-h-0">
             {code} preset
           </button>
         ))}
@@ -305,7 +305,7 @@ function ChannelsCard() {
             <button aria-label={`Delete channel ${c.name}`}
                     onClick={() => confirm(`Delete the sales channel "${c.name}"?`) && del.mutate(c.id)}
                     disabled={del.isPending}
-                    className="text-ink-faint hover:text-bad">✕</button>
+                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-ink-faint hover:text-bad sm:min-h-0 sm:min-w-0">✕</button>
           </div>
         ))}
       </div>
@@ -328,7 +328,7 @@ function AuditCard() {
     queryFn: () => api.get(`/admin/audit?${entity ? `entity=${entity}&` : ""}page=${page}`),
   });
   return (
-    <Card className="p-5 lg:col-span-2">
+    <Card className="min-w-0 p-5 lg:col-span-2">
       <div className="mb-3 flex items-center justify-between">
         <SectionLabel>Audit trail — every change, who & when</SectionLabel>
         <select value={entity} onChange={(e) => { setEntity(e.target.value); setPage(1); }}
@@ -340,9 +340,9 @@ function AuditCard() {
           ))}
         </select>
       </div>
-      <div className="max-h-72 space-y-1 overflow-y-auto text-xs">
+      <div className="max-h-72 space-y-1 overflow-auto text-xs">
         {(q.data?.rows ?? []).map((a: any) => (
-          <div key={a.id} className="flex items-start gap-2 rounded px-2 py-1 hover:bg-paper-3/60">
+          <div key={a.id} className="flex min-w-[34rem] items-start gap-2 rounded px-2 py-1 hover:bg-paper-3/60">
             <span className="num w-36 shrink-0 text-ink-faint">
               {new Date(a.ts).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
             </span>
@@ -575,7 +575,7 @@ function UsersCard() {
       <div className="space-y-2">
         {(q.data ?? []).map((u: any) => (
           <button key={u.id} onClick={() => setEditing(u)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-paper-3">
+                  className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm sm:min-h-0 hover:bg-paper-3">
             <span className="min-w-0 flex-1 truncate font-medium">{u.username}</span>
             {u.full_name && <span className="truncate text-xs text-ink-faint">{u.full_name}</span>}
             <Badge tone={u.role === "owner" ? "accent" : "neutral"}>{u.role}</Badge>
@@ -731,7 +731,7 @@ function OutletsCard() {
               </>
             ) : (
               <>
-                <button className="min-w-0 flex-1 truncate text-left font-medium hover:text-accent"
+                <button className="min-h-11 min-w-0 flex-1 truncate text-left font-medium hover:text-accent sm:min-h-0"
                         title="Click to rename"
                         onClick={() => { setEditingId(o.id); setDraftName(o.name); }}>
                   {o.name}

@@ -11,7 +11,7 @@ export const Button = ({
   <button
     {...p}
     className={clsx(
-      "inline-flex min-h-11 items-center justify-center gap-2 rounded-md font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:opacity-50 sm:min-h-9",
+      "inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:opacity-50 sm:min-h-9 sm:min-w-0",
       size === "sm" && "px-2.5 py-1.5 text-sm",
       size === "md" && "px-4 py-2.5 text-sm",
       size === "lg" && "px-5 py-3 text-base",

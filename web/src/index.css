@@ -21,6 +21,25 @@
   button {
     font: inherit;
   }
+  /* iOS Safari zooms the whole page in when you focus a field smaller than
+     16px, and never zooms back out. On a phone that turns every day-sheet
+     entry into a pinch-to-fix chore, so force 16px on touch devices only —
+     the desktop layout keeps its denser type. !important is deliberate: the
+     Tailwind text-* utilities on individual fields are injected after this
+     layer and would otherwise win. */
+  @media (pointer: coarse) {
+    input:not([type="checkbox"]):not([type="radio"]),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+    /* Fingers are blunter than a mouse pointer: give every field a real
+       44px target so a mistyped tap can't land on the row beneath. */
+    input:not([type="checkbox"]):not([type="radio"]),
+    select {
+      min-height: 2.75rem;
+    }
+  }
 }
 
 @layer components {

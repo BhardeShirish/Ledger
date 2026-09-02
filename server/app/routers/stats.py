@@ -263,9 +263,15 @@ def dashboard(outlet_id: int | None = None, month: str | None = None,
                                  SalesDaily.tax_paise,
                                  SalesDaily.discount_paise,
                                  SalesDaily.amount_paise).all())
-        # manual rows keep their number in amount_paise; POS rows in total_paise
-        return [(bd, kind, net, (total if source == "petpooja" else (amount or 0)),
-                 tip, tax, disc) for bd, kind, net, total, tip, tax, disc, amount in rows]
+        # A manual entry is one number the owner typed - there is no separate
+        # gross and net for it, so the amount has to stand in for both. Leaving
+        # net at net_paise (which manual rows never fill) made the payment-mix
+        # card read zero for everyone not importing from a POS.
+        return [(bd, kind,
+                 (net if source == "petpooja" else (amount or 0)),
+                 (total if source == "petpooja" else (amount or 0)),
+                 tip, tax, disc)
+                for bd, kind, net, total, tip, tax, disc, amount in rows]
 
     manual_rows = sale_series("manual")
     imported_rows = sale_series("petpooja")

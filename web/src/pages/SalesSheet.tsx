@@ -99,21 +99,21 @@ export default function SalesSheet() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <SectionLabel>Sales</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">{fmtDate(date)}</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="date" value={date}
+                 onChange={(e) => { setDate(e.target.value); setDrafts({}); }}
+                 className="rounded-md border border-rule-strong bg-paper px-3 py-1.5 num text-sm" />
           <ExportButton entity="sales_sheet"
                         params={{ outlet_id: outletId,
                                   start: `${date.slice(0, 7)}-01`,
                                   end: date }} />
           <ImportButtons entity="sales_manual" outletId={outletId}
                          onDone={() => qc.invalidateQueries({ queryKey: ["sales-sheet"] })} />
-          <input type="date" value={date}
-                 onChange={(e) => { setDate(e.target.value); setDrafts({}); }}
-                 className="rounded-md border border-rule-strong bg-paper px-3 py-1.5 num text-sm" />
         </div>
       </header>
       <ErrorNote msg={err} />

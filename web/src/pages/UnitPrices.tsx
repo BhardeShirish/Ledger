@@ -42,10 +42,11 @@ export default function UnitPrices() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm"
+          <Button variant="outline" size="sm" aria-label="Previous month"
                   onClick={() => setMonthOffset(monthOffset - 1)}>‹</Button>
           <span className="min-w-[5.5rem] px-1 py-1.5 text-center text-sm font-medium text-ink-soft">{monthLabelShort(period)}</span>
           <Button variant="outline" size="sm" disabled={monthOffset <= 0}
+                  aria-label="Next month"
                   onClick={() => setMonthOffset(monthOffset + 1)}>›</Button>
           <ExportButton entity="unit_economics"
                         params={{ outlet_id: outletId, start: `${period}-01`, end: `${period}-31` }} />

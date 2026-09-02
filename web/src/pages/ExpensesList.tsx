@@ -63,7 +63,7 @@ export default function ExpensesList() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <SectionLabel>Money · Expenses</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -74,9 +74,11 @@ export default function ExpensesList() {
           </h1>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setMonthOffset(monthOffset - 1)}>‹</Button>
+          <Button variant="outline" size="sm" aria-label="Previous month"
+                  onClick={() => setMonthOffset(monthOffset - 1)}>‹</Button>
           <span className="min-w-[5.5rem] px-1 py-1.5 text-center text-sm font-medium text-ink-soft">{monthLabelShort(period)}</span>
           <Button variant="outline" size="sm" disabled={monthOffset >= 0}
+                  aria-label="Next month"
                   onClick={() => setMonthOffset(monthOffset + 1)}>›</Button>
         </div>
       </header>

@@ -50,18 +50,20 @@ export default function Reports() {
           <SectionLabel>Insights</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">{monthLabel(month)}</h1>
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           {me?.role === "owner" && me.outlet_ids.length > 1 && (
             <button onClick={() => setScopeAll(!scopeAll)}
-              className={`rounded-md border px-2.5 py-1.5 font-medium ${scopeAll ? "border-accent bg-accent-soft text-accent" : "border-rule-strong"}`}>
+              className={`min-h-11 rounded-md border px-2.5 py-1.5 font-medium sm:min-h-0 ${scopeAll ? "border-accent bg-accent-soft text-accent" : "border-rule-strong"}`}>
               All outlets
             </button>
           )}
-          <button className="rounded border border-rule-strong px-2 py-1"
+          <button className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-rule-strong px-2 py-1 sm:min-h-0 sm:min-w-0"
+                  aria-label="Previous month"
                   onClick={() => setMonthOffset(monthOffset - 1)}>‹</button>
           <span className="min-w-[5.5rem] px-1 text-center font-medium">{monthLabelShort(month)}</span>
           <button disabled={monthOffset >= 0}
-                  className="rounded border border-rule-strong px-2 py-1 disabled:opacity-40"
+                  aria-label="Next month"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-rule-strong px-2 py-1 disabled:opacity-40 sm:min-h-0 sm:min-w-0"
                   onClick={() => setMonthOffset(monthOffset + 1)}>›</button>
         </div>
       </header>
@@ -373,8 +375,13 @@ function InsightCards({ outletId, month, daysRecorded }:
           <div className="flex flex-wrap items-center justify-between gap-2">
             <SectionLabel>Break-even</SectionLabel>
             <Badge tone={be.data.coverage_percent == null ? "neutral"
+                          // A month with no rent or salaries recorded always
+                          // clears its "break-even", so a green tick there is
+                          // just measuring the missing costs.
+                          : be.data.fixed_costs_rupees === 0 ? "neutral"
                           : be.data.breakeven_met ? "good" : "warn"}>
               {be.data.coverage_percent == null ? "no costs recorded"
+                : be.data.fixed_costs_rupees === 0 ? "costs incomplete"
                 : be.data.breakeven_met ? "covered" : "not covered yet"}
             </Badge>
           </div>
@@ -389,7 +396,9 @@ function InsightCards({ outletId, month, daysRecorded }:
                 <span className="ml-2 text-sm font-normal text-ink-faint">of costs covered by sales</span>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-paper-3">
-                <div className={`h-full rounded-full ${be.data.breakeven_met ? "bg-good" : "bg-bad"}`}
+                <div className={`h-full rounded-full ${
+                  be.data.fixed_costs_rupees === 0 ? "bg-ink-faint/40"
+                    : be.data.breakeven_met ? "bg-good" : "bg-bad"}`}
                      style={{ width: `${Math.min(100, be.data.coverage_percent)}%` }} />
               </div>
               {be.data.fixed_costs_rupees === 0 && (

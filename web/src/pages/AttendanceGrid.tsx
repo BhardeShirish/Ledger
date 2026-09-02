@@ -432,14 +432,16 @@ export default function AttendanceGrid() {
                     {["P", "A"].includes(st!) && (
                       <button onClick={() => toggleDouble(e.id, cell)}
                               title={st === "A" ? "Absent for both shifts" : "Double shift"}
-                              className={`rounded px-1.5 py-0.5 num text-xs font-bold ${
+                              aria-label={st === "A" ? "Absent for both shifts" : "Double shift"}
+                              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 num text-xs font-bold sm:min-h-0 sm:min-w-0 ${
                                 v.double_duty ? (st === "A" ? "bg-bad text-white" : "bg-accent text-white")
                                 : "border border-rule-strong text-ink-faint"}`}>
                         ×{v.double_duty ? 2 : 1}
                       </button>
                     )}
                     <button onClick={() => cycle(e.id, cell)}
-                            className={`w-9 rounded px-1 py-1 text-xs font-semibold ${STATUS_TONE[st ?? ""] ?? "border border-rule-strong text-ink-faint"}`}>
+                            aria-label={`${e.name}: change attendance`}
+                            className={`inline-flex min-h-11 w-11 items-center justify-center rounded px-1 py-1 text-xs font-semibold sm:min-h-0 sm:w-9 ${STATUS_TONE[st ?? ""] ?? "border border-rule-strong text-ink-faint"}`}>
                       {st ?? (cell.off_day ? "off" : "—")}
                     </button>
                   </div>

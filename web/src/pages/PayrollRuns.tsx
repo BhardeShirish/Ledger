@@ -43,7 +43,7 @@ export default function PayrollRuns() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <SectionLabel>Money · Payroll</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">Monthly salaries</h1>
