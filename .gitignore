@@ -13,6 +13,8 @@ web/tsconfig.tsbuildinfo
 *.log
 test_bill.png
 Ledger-*.zip
+dist-exe/
+build-exe/
 
 # Real business data used while developing — never publish
 References/

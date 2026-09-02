@@ -32,7 +32,9 @@ echo "LEDGER_DEMO_SEED=1" >> .env
 docker compose up -d
 ```
 
-**Windows, no Docker:** double-click `Start-Ootaa-Ledger.cmd`.
+**Windows, no Docker:** double-click `Start-Ootaa-Ledger.cmd`, or download
+`OotaaLedger.exe` from the [latest release](../../releases/latest) and
+double-click that — it needs nothing installed at all.
 
 Either way, open <http://localhost:8080> and sign in as `owner` with the
 password you set. Remove the `LEDGER_DEMO_SEED` line and start from an empty
@@ -42,10 +44,41 @@ database when you are ready for real records.
 
 ## Running it for real
 
-### Windows (the usual case)
+### Windows, nothing installed (the easiest route)
 
-Everything is double-clickable, because Windows blocks double-clicked
-PowerShell files:
+Download `OotaaLedger.exe` from the
+[latest release](../../releases/latest) and double-click it. There is nothing
+to install — no Python, no Node, no Docker. The Python runtime, the server and
+the web pages all live inside that one file.
+
+The first run asks you to choose an owner password, then opens Ledger in your
+browser. Every run after that goes straight there. Closing the black window
+stops Ledger.
+
+Your records are kept in `%LOCALAPPDATA%\OotaaLedger\data`, separate from the
+program, so replacing the exe with a newer one never touches them. To back
+Ledger up, copy that folder.
+
+Three environment variables change its behaviour if you need them:
+`LEDGER_DATA_DIR` (keep records elsewhere, such as a shared drive),
+`LEDGER_PORT` (default `8080`), and `LEDGER_HOST` — set that to `0.0.0.0` to
+reach Ledger from your phone, after reading
+[Using it from your phone](#using-it-from-your-phone).
+
+Windows SmartScreen warns you the first time, because the file is not
+code-signed. Choose *More info → Run anyway*, or build it yourself:
+
+```powershell
+cd web; npm ci; npm run build; cd ..
+pip install -r server/requirements.txt pyinstaller
+python -m PyInstaller packaging/ledger.spec --noconfirm --distpath dist-exe
+```
+
+### Windows, from the source ZIP
+
+The older route. It keeps Ledger running in the background from logon, which
+the single exe does not do. Everything is double-clickable, because Windows
+blocks double-clicked PowerShell files:
 
 | I want to… | Double-click |
 |---|---|

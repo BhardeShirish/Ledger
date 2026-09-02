@@ -59,3 +59,52 @@ jobs:
             sleep 2
           done
           echo "never became healthy:"; docker logs ledger-ci; exit 1
+
+  windows-exe:
+    # Builds the no-dependency Windows download and proves it starts. Without
+    # this the exe silently rots the first time a dependency moves.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: pip install -r server/requirements.txt pyinstaller
+      - run: python -m PyInstaller packaging/ledger.spec --noconfirm --distpath dist-exe
+      - name: It must actually start and serve the app
+        shell: pwsh
+        run: |
+          $env:LEDGER_DATA_DIR = "$env:RUNNER_TEMP\ledger-ci"
+          $env:LEDGER_OWNER_PASSWORD = "ci-test-password-1234"
+          $env:LEDGER_PORT = "8080"
+          $p = Start-Process .\dist-exe\OotaaLedger.exe -PassThru
+          $ok = $false
+          foreach ($i in 1..45) {
+            try {
+              if ((Invoke-WebRequest http://127.0.0.1:8080/api/health -UseBasicParsing).StatusCode -eq 200) {
+                $ok = $true; break
+              }
+            } catch { Start-Sleep 2 }
+          }
+          if (-not $ok) { throw "the executable never became healthy" }
+          $login = Invoke-WebRequest http://127.0.0.1:8080/api/auth/login -Method POST `
+            -Body '{"username":"owner","password":"ci-test-password-1234"}' `
+            -ContentType application/json -UseBasicParsing
+          if ($login.StatusCode -ne 200) { throw "login failed" }
+          if ((Invoke-WebRequest http://127.0.0.1:8080/ -UseBasicParsing).StatusCode -ne 200) {
+            throw "the web pages are not bundled"
+          }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OotaaLedger-windows
+          path: dist-exe/OotaaLedger.exe
