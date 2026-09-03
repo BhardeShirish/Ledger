@@ -50,5 +50,5 @@ exe = EXE(
     strip=False,
     bootloader_ignore_signals=False,
     runtime_tmpdir=None,
-    icon=None,
+    icon="ledger.ico",
 )

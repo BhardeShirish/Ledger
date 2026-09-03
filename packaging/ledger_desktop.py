@@ -99,6 +99,21 @@ def open_browser_when_ready(url: str, health: str) -> None:
         time.sleep(0.5)
 
 
+def already_running(host: str, port: int) -> bool:
+    """True when something already holds the port.
+
+    Double-clicking the icon twice is an ordinary thing to do, and without
+    this the second copy dies with a red socket error. Ledger is meant to be
+    running, so the friendly answer is to show the owner the window they were
+    actually asking for.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def main() -> int:
     bundle = bundle_dir()
     data = data_dir()
@@ -108,10 +123,6 @@ def main() -> int:
     os.environ["LEDGER_WEB_DIST"] = str(bundle / "web" / "dist")
     sys.path.insert(0, str(bundle / "server"))
 
-    first_run = not (data / "ledger.db").exists()
-    if first_run and not os.environ.get("LEDGER_OWNER_PASSWORD"):
-        os.environ["LEDGER_OWNER_PASSWORD"] = ask_for_password()
-
     host = os.environ.get("LEDGER_HOST", "127.0.0.1").strip() or "127.0.0.1"
     try:
         port = int(os.environ.get("LEDGER_PORT", "8080"))
@@ -120,6 +131,16 @@ def main() -> int:
         return 2
 
     url = f"http://localhost:{port}"
+
+    if already_running(host, port):
+        print(f"\n  Ledger is already running. Opening it at {url}\n", flush=True)
+        webbrowser.open(url)
+        return 0
+
+    first_run = not (data / "ledger.db").exists()
+    if first_run and not os.environ.get("LEDGER_OWNER_PASSWORD"):
+        os.environ["LEDGER_OWNER_PASSWORD"] = ask_for_password()
+
     print(f"  Ootaa Ledger is starting -> {url}")
     print(f"  Your records: {data}")
     if host not in ("127.0.0.1", "localhost", "::1"):

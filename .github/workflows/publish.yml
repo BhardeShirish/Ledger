@@ -121,6 +121,17 @@ jobs:
           }
           Stop-Process -Id $p.Id -Force
 
+      # Inno Setup is preinstalled on the GitHub Windows runners.
+      - name: Wrap it in an installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\ledger.iss
+
+      # Both are offered: the installer for people who want a Start Menu
+      # entry, and the bare exe for people who want to carry it on a stick.
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist-exe/OotaaLedger.exe
+          files: |
+            dist-exe/OotaaLedger-Setup.exe
+            dist-exe/OotaaLedger.exe

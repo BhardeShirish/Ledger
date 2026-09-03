@@ -33,8 +33,8 @@ docker compose up -d
 ```
 
 **Windows, no Docker:** double-click `Start-Ootaa-Ledger.cmd`, or download
-`OotaaLedger.exe` from the [latest release](../../releases/latest) and
-double-click that — it needs nothing installed at all.
+`OotaaLedger-Setup.exe` from the [latest release](../../releases/latest) and
+run it — it needs nothing installed at all.
 
 Either way, open <http://localhost:8080> and sign in as `owner` with the
 password you set. Remove the `LEDGER_DEMO_SEED` line and start from an empty
@@ -46,18 +46,28 @@ database when you are ready for real records.
 
 ### Windows, nothing installed (the easiest route)
 
-Download `OotaaLedger.exe` from the
-[latest release](../../releases/latest) and double-click it. There is nothing
-to install — no Python, no Node, no Docker. The Python runtime, the server and
-the web pages all live inside that one file.
+Download `OotaaLedger-Setup.exe` from the
+[latest release](../../releases/latest) and run it. There is nothing else to
+install — no Python, no Node, no Docker. The Python runtime, the server and
+the web pages all live inside it.
+
+It installs into your own user folder, so it never asks for an administrator
+password. It offers a desktop shortcut and a *start Ledger when I sign in*
+option, adds a Start Menu entry, and uninstalls from Settings → Apps like any
+other program.
 
 The first run asks you to choose an owner password, then opens Ledger in your
 browser. Every run after that goes straight there. Closing the black window
-stops Ledger.
+stops Ledger, and clicking the icon again while it is already running just
+reopens the page.
 
 Your records are kept in `%LOCALAPPDATA%\OotaaLedger\data`, separate from the
-program, so replacing the exe with a newer one never touches them. To back
-Ledger up, copy that folder.
+program. Updating Ledger, or uninstalling it completely, never touches them —
+verified, not assumed. To back Ledger up, copy that folder.
+
+If you would rather not install anything at all, the same release also has a
+bare `OotaaLedger.exe`. It is the identical program without the shortcuts, so
+it runs from a USB stick.
 
 Three environment variables change its behaviour if you need them:
 `LEDGER_DATA_DIR` (keep records elsewhere, such as a shared drive),
@@ -72,6 +82,7 @@ code-signed. Choose *More info → Run anyway*, or build it yourself:
 cd web; npm ci; npm run build; cd ..
 pip install -r server/requirements.txt pyinstaller
 python -m PyInstaller packaging/ledger.spec --noconfirm --distpath dist-exe
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging\ledger.iss
 ```
 
 ### Windows, from the source ZIP

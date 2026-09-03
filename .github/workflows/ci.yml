@@ -104,7 +104,11 @@ jobs:
             throw "the web pages are not bundled"
           }
           Stop-Process -Id $p.Id -Force
+      - name: The installer must compile
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\ledger.iss'
       - uses: actions/upload-artifact@v4
         with:
           name: OotaaLedger-windows
-          path: dist-exe/OotaaLedger.exe
+          path: |
+            dist-exe/OotaaLedger.exe
+            dist-exe/OotaaLedger-Setup.exe
