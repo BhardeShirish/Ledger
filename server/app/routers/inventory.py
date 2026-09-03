@@ -79,6 +79,25 @@ def ensure_purchase_movement(db: Session, outlet_id: int, business_date: str,
                synchronize_session=False))
 
 
+def drop_purchase_movement(db: Session, expense_id: int) -> None:
+    """Undo the stock a qty-tracked expense added.
+
+    An expense and its purchase movement are two halves of one fact. Editing
+    or deleting the expense without this leaves stock on the shelf that was
+    never bought, and a unit price computed from an amount nobody paid.
+    """
+    movements = (db.query(StockMovement)
+                   .filter_by(ref_expense_id=expense_id, type="purchase").all())
+    for m in movements:
+        (db.query(StockItem)
+           .filter(StockItem.id == m.stock_item_id)
+           .update({StockItem.current_qty: StockItem.current_qty - m.qty},
+                   synchronize_session=False))
+        db.delete(m)
+    if movements:
+        db.flush()
+
+
 # ── items ─────────────────────────────────────────────────────────────────
 
 class ItemIn(BaseModel):

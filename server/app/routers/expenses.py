@@ -9,9 +9,13 @@ from ..models import Expense, User, utcnow
 from ..security import current_user
 from ..util import paise
 from .helpers import assert_outlet_access
-from .inventory import ensure_purchase_movement
+from .inventory import drop_purchase_movement, ensure_purchase_movement
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
+
+# UPI first: it is how most bills are paid now, and it is the safe default -
+# a cash entry silently lowers the drawer the shop counts at closing.
+MODES = ("upi", "cash", "card", "bank", "credit", "other")
 
 
 class ExpenseIn(BaseModel):
@@ -20,7 +24,7 @@ class ExpenseIn(BaseModel):
     category_id: int
     vendor_id: int | None = None
     amount_rupees: float
-    mode: str = "cash"
+    mode: str = "upi"
     description: str = ""
     receipt_path: str | None = None
     item_name: str = ""          # unit economics (raw materials)
@@ -58,7 +62,7 @@ class BulkExpenseIn(BaseModel):
     business_date: str
     category_id: int
     vendor_id: int | None = None
-    mode: str = "cash"
+    mode: str = "upi"
     receipt_path: str | None = None
     note: str = ""
     bill_total_rupees: float | None = None      # from the bill; remainder booked as adjustment
@@ -78,7 +82,7 @@ def create_bulk_expenses(body: BulkExpenseIn, user: User = Depends(current_user)
         raise HTTPException(422,
             "Quantity given without a vendor — pick who the bill is from so "
             "unit prices can be compared later.")
-    if body.mode not in ("cash", "upi", "card", "bank", "credit", "other"):
+    if body.mode not in MODES:
         raise HTTPException(422, "Bad payment mode")
 
     created_ids = []
@@ -170,6 +174,8 @@ def create_expense(body: ExpenseIn, user: User = Depends(current_user),
         if existing:
             return _serialize(existing)
     check_edit_window(body.business_date, user, db)
+    if body.mode not in MODES:
+        raise HTTPException(422, "Bad payment mode")
     if body.amount_rupees <= 0:
         raise HTTPException(422, "Amount must be positive")
     if (body.quantity is not None and body.quantity > 0) and not body.vendor_id:
@@ -209,6 +215,8 @@ def update_expense(expense_id: int, body: dict, user: User = Depends(current_use
     if new_date and new_date != e.business_date:
         check_edit_window(new_date, user, db)
     before = {"amount_rupees": round(e.amount_paise / 100, 2), "mode": e.mode}
+    if "mode" in body and body["mode"] not in MODES:
+        raise HTTPException(422, f"Mode must be one of {', '.join(MODES)}")
     if "amount_rupees" in body:
         amount_paise = paise(body["amount_rupees"])
         if amount_paise <= 0:
@@ -220,6 +228,12 @@ def update_expense(expense_id: int, body: dict, user: User = Depends(current_use
             setattr(e, k, body[k])
     e.updated_at = utcnow()
     e.updated_by = user.id
+    # The amount and the date both live in the stock movement too, so rebuild
+    # it from what the expense now says rather than leaving a stale copy.
+    drop_purchase_movement(db, e.id)
+    ensure_purchase_movement(db, e.outlet_id, e.business_date, e.item_name or "",
+                             e.quantity or 0, e.unit or "", e.amount_paise,
+                             user.id, e.id)
     audit(db, None, user.id, "update", "expense", e.id, before=before,
           after={"amount_rupees": round(e.amount_paise / 100, 2)})
     db.commit()
@@ -234,6 +248,7 @@ def delete_expense(expense_id: int, user: User = Depends(current_user),
         raise HTTPException(404, "Expense not found")
     assert_outlet_access(db, user, e.outlet_id)
     check_edit_window(e.business_date, user, db)
+    drop_purchase_movement(db, e.id)
     db.delete(e)
     audit(db, None, user.id, "delete", "expense", e.id,
           before={"amount_rupees": round(e.amount_paise / 100, 2)})

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, ScanText, Plus, X } from "lucide-react";
+import { Camera, ScanText, Pencil, Plus, X } from "lucide-react";
 import { api } from "../api/client";
 import { moneyCfg } from "../lib/format";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
@@ -20,6 +20,7 @@ export default function ExpensesList() {
   const qc = useQueryClient();
   const guarded = useGuarded();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<any | null>(null);
   const [monthOffset, setMonthOffset] = useState(0);
 
   const period = useMemo(() => {
@@ -115,9 +116,22 @@ export default function ExpensesList() {
                       hint="Gas cylinder, vegetables, repairs — log them as they happen." />
         )}
         {(list.data?.rows ?? []).map((e: any) => (
-          <ExpenseRow key={e.id} e={e} cats={cats.data ?? []} />
+          <ExpenseRow key={e.id} e={e} cats={cats.data ?? []}
+                      onEdit={() => setEditing(e)} />
         ))}
       </Card>
+
+      <EditExpenseSheet
+        expense={editing}
+        cats={cats.data ?? []}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          qc.invalidateQueries({ queryKey: ["expenses"] });
+          qc.invalidateQueries({ queryKey: ["home"] });
+          qc.invalidateQueries({ queryKey: ["unit-econ"] });
+        }}
+      />
 
       <AddExpenseSheet
         open={open} onClose={() => setOpen(false)}
@@ -133,25 +147,119 @@ export default function ExpensesList() {
   );
 }
 
-function ExpenseRow({ e, cats }: { e: any; cats: any[] }) {
+function ExpenseRow({ e, cats, onEdit }: { e: any; cats: any[]; onEdit: () => void }) {
   const catName = cats.find((c) => c.id === e.category_id)?.name ?? "?";
   return (
     <div className="flex items-center gap-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{e.description || catName}</div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-faint">
-          <span>{fmtDateShort(e.business_date)}</span>·<span>{catName}</span>
-          {e.mode === "cash" && <Badge tone="warn">cash</Badge>}
-          {e.mode !== "cash" && <Badge>{e.mode}</Badge>}
+      <button onClick={onEdit}
+              aria-label={`Edit ${e.description || catName}`}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{e.description || catName}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-faint">
+            <span>{fmtDateShort(e.business_date)}</span>·<span>{catName}</span>
+            {e.mode === "cash" && <Badge tone="warn">cash</Badge>}
+            {e.mode !== "cash" && <Badge>{e.mode}</Badge>}
+          </div>
         </div>
-      </div>
+        <div className="num font-medium">{inr(e.amount_paise)}</div>
+        <Pencil size={14} className="shrink-0 text-ink-faint" />
+      </button>
       {e.receipt_path && (
         <a href={e.receipt_path} target="_blank" rel="noreferrer" title="View receipt">
           <Camera size={15} className="text-ink-faint hover:text-accent" />
         </a>
       )}
-      <div className="num font-medium">{inr(e.amount_paise)}</div>
     </div>
+  );
+}
+
+function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
+  expense: any | null; cats: any[]; onClose: () => void; onSaved: () => void;
+}) {
+  const guarded = useGuarded();
+  const [date, setDate] = useState("");
+  const [amount, setAmount] = useState("");
+  const [catId, setCatId] = useState<number | null>(null);
+  const [mode, setMode] = useState("upi");
+  const [desc, setDesc] = useState("");
+
+  // Load the row being corrected, not whatever the last one left behind.
+  useEffect(() => {
+    if (!expense) return;
+    setDate(expense.business_date);
+    setAmount(String(expense.amount_rupees ?? expense.amount_paise / 100));
+    setCatId(expense.category_id);
+    setMode(expense.mode);
+    setDesc(expense.description ?? "");
+  }, [expense]);
+
+  const save = useMutation({
+    mutationFn: (body: any) =>
+      guarded(() => api.patch(`/expenses/${expense.id}`, body)),
+    onSuccess: onSaved,
+  });
+
+  if (!expense) return null;
+
+  return (
+    <Sheet open onClose={onClose} title="Edit expense">
+      <div className="space-y-3.5">
+        <Field label="Amount">
+          <Input inputMode="decimal" autoFocus value={amount}
+                 onChange={(e) => setAmount(e.target.value)}
+                 className="text-right text-xl" />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Paid by">
+            <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <option value="upi">UPI</option>
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+              <option value="bank">Bank transfer</option>
+              <option value="other">Other</option>
+            </Select>
+          </Field>
+          <Field label="Date">
+            <Input type="date" value={date} max={todayISO()}
+                   onChange={(e) => setDate(e.target.value)} />
+          </Field>
+        </div>
+
+        <Field label="Category">
+          <Select value={catId ?? ""}
+                  onChange={(e) => setCatId(Number(e.target.value))}>
+            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+        </Field>
+
+        <Field label="Note">
+          <Input value={desc} placeholder="What was this for?"
+                 onChange={(e) => setDesc(e.target.value)} />
+        </Field>
+
+        {expense.quantity > 0 && (
+          <p className="text-xs text-ink-faint">
+            {expense.quantity} {expense.unit || "unit"} of {expense.item_name}.
+            Changing the amount re-prices this purchase in stock too.
+          </p>
+        )}
+
+        {save.error && <ErrorNote msg={(save.error as Error).message} />}
+
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+          <Button className="flex-1" disabled={save.isPending || !amount || !catId}
+                  onClick={() => save.mutate({
+                    business_date: date, amount_rupees: Number(amount),
+                    category_id: catId, mode, description: desc,
+                  })}>
+            {save.isPending ? <Spinner /> : "Save changes"}
+          </Button>
+        </div>
+      </div>
+    </Sheet>
   );
 }
 
@@ -164,7 +272,7 @@ export function AddExpenseSheet(props: {
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState("");
   const [catId, setCatId] = useState<number | null>(null);
-  const [mode, setMode] = useState("cash");
+  const [mode, setMode] = useState("upi");
   const [desc, setDesc] = useState("");
   const [vendorQ, setVendorQ] = useState("");
   const [vendorId, setVendorId] = useState<number | null>(null);
@@ -196,7 +304,7 @@ export function AddExpenseSheet(props: {
   }, [props.open]);
   useEffect(() => {
     if (!props.open) {
-      setAmount(""); setCatId(null); setMode("cash"); setDesc("");
+      setAmount(""); setCatId(null); setMode("upi"); setDesc("");
       setVendorQ(""); setVendorId(null); setReceiptPath(null);
       setItemName(""); setQuantity(""); setUnit("");
       setMulti(false); setLines([]); setBillTotal("");
@@ -393,8 +501,8 @@ export function AddExpenseSheet(props: {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Paid by">
             <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="cash">Cash</option>
               <option value="upi">UPI</option>
+              <option value="cash">Cash</option>
               <option value="card">Card</option>
               <option value="bank">Bank transfer</option>
               <option value="other">Other</option>
