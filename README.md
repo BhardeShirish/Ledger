@@ -222,16 +222,41 @@ that is quietly a week out of date is more dangerous than an error message.
 
 ## Your data
 
-Everything lives in `server/data` (Windows) or the `ledger-data` volume
+Everything lives in `%LOCALAPPDATA%\OotaaLedger\data` (the installer or the
+standalone exe), `server/data` (the source ZIP) or the `ledger-data` volume
 (Docker): the SQLite database, uploaded receipts, and the signing key that
 keeps you logged in across restarts. Copy that folder and you have copied the
 whole business.
 
 To restore a backup, stop Ledger, then replace the database and uploaded files
 in that folder before restarting. Do not drop the backup ZIP into
-`server/data` — the server does not auto-extract it.
+the data folder — the server does not auto-extract it.
 
-### Moving to a new Windows PC
+**Stop Ledger before you copy the database.** While it is running, part of
+your most recent work is held in the `ledger.db-wal` file beside it. Copying
+those files from a live database produces a snapshot that does not start at
+all — tested, not theorised. If you cannot stop it, copy the newest file from
+the `backups` folder instead: those are consistent snapshots, and a copy of
+one renamed to `ledger.db` starts cleanly.
+
+### Moving to a new Windows PC (installer or standalone exe)
+
+1. On the new PC, install Ledger and let it start once, so the folders exist.
+   Quit it.
+2. On the old PC, quit Ledger, then copy from
+   `%LOCALAPPDATA%\OotaaLedger\data`:
+   * `ledger.db` — every record you have
+   * the `uploads` folder — your receipt photographs, which are **not** inside
+     the database and are silently lost if you forget them
+   * `secret.key` — optional. Bringing it keeps you signed in; leaving it
+     behind only means signing in again. Your password works either way.
+3. Put those in the same folder on the new PC, overwriting what is there, and
+   start Ledger.
+
+Do not resume entering data on the old PC afterwards; the two databases do not
+synchronise.
+
+### Moving to a new Windows PC (source ZIP)
 
 Run `.\setup\Create-Ledger-New-PC-Package.ps1` on the old PC. It stops Ledger,
 then builds `Ledger-New-PC.zip` with a consistent database snapshot, the
