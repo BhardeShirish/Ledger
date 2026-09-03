@@ -39,7 +39,13 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; Ledger holds its own program file open while it is running, so an upgrade
 ; over a running copy would otherwise fail with a locked-file error that
 ; means nothing to the person reading it.
-CloseApplications=yes
+;
+; force, not yes: Ledger is a console server with no message loop, so the
+; Restart Manager cannot ask it politely to quit and setup gives up instead
+; (it exits with code 5, "cancelled" - measured, not guessed). Terminating it
+; is safe because that is also what closing its window does, and SQLite's
+; write-ahead log is crash-safe.
+CloseApplications=force
 RestartApplications=no
 
 [Languages]
