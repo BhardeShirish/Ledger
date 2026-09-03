@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, ScanText, Pencil, Plus, X } from "lucide-react";
+import { Camera, ScanText, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api/client";
 import { moneyCfg } from "../lib/format";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
@@ -183,6 +183,7 @@ function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
   const [catId, setCatId] = useState<number | null>(null);
   const [mode, setMode] = useState("upi");
   const [desc, setDesc] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Load the row being corrected, not whatever the last one left behind.
   useEffect(() => {
@@ -192,11 +193,17 @@ function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
     setCatId(expense.category_id);
     setMode(expense.mode);
     setDesc(expense.description ?? "");
+    setConfirmingDelete(false);
   }, [expense]);
 
   const save = useMutation({
     mutationFn: (body: any) =>
       guarded(() => api.patch(`/expenses/${expense.id}`, body)),
+    onSuccess: onSaved,
+  });
+
+  const remove = useMutation({
+    mutationFn: () => guarded(() => api.del(`/expenses/${expense.id}`)),
     onSuccess: onSaved,
   });
 
@@ -246,7 +253,9 @@ function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
           </p>
         )}
 
-        {save.error && <ErrorNote msg={(save.error as Error).message} />}
+        {(save.error || remove.error) && (
+          <ErrorNote msg={((save.error ?? remove.error) as Error).message} />
+        )}
 
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
@@ -257,6 +266,34 @@ function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
                   })}>
             {save.isPending ? <Spinner /> : "Save changes"}
           </Button>
+        </div>
+
+        {/* Deleting is the one action that cannot be undone, so it asks twice
+            and never sits under the thumb that just tapped "Save". */}
+        <div className="border-t border-rule pt-3">
+          {!confirmingDelete ? (
+            <button onClick={() => setConfirmingDelete(true)}
+                    className="inline-flex items-center gap-1.5 text-sm text-ink-faint hover:text-bad">
+              <Trash2 size={14} /> Delete this expense
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-ink-soft">
+                Delete {inr(Math.round(Number(amount) * 100))} permanently?
+                {expense.quantity > 0 &&
+                  " The stock it added will come back off the shelf too."}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1"
+                        onClick={() => setConfirmingDelete(false)}>Keep it</Button>
+                <Button variant="danger" size="sm" className="flex-1"
+                        disabled={remove.isPending}
+                        onClick={() => remove.mutate()}>
+                  {remove.isPending ? <Spinner /> : "Yes, delete"}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Sheet>

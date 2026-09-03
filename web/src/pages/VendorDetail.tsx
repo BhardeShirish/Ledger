@@ -25,14 +25,14 @@ export default function VendorDetail() {
 
   const [openType, setOpenType] = useState<"purchase_credit" | "payment" | null>(null);
   const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState("cash");
+  const [mode, setMode] = useState("upi");
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [receiptPath, setReceiptPath] = useState<string | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
-    setAmount(""); setMode("cash"); setDate(todayISO());
+    setAmount(""); setMode("upi"); setDate(todayISO());
     setNote(""); setReceiptPath(null); setErr("");
   }, [openType, vid]);
 
@@ -109,7 +109,7 @@ export default function VendorDetail() {
             {openType === "payment" && (
               <Field label="Paid by">
                 <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-                  <option value="cash">Cash</option><option value="upi">UPI</option>
+                  <option value="upi">UPI</option><option value="cash">Cash</option>
                   <option value="bank">Bank</option><option value="other">Other</option>
                 </Select>
               </Field>

@@ -21,7 +21,7 @@ class AdvanceIn(BaseModel):
 class RepayIn(BaseModel):
     date: str
     amount_rupees: float
-    via: str = "cash"
+    via: str = "upi"
     note: str = ""
 
 

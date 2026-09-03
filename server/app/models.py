@@ -288,7 +288,7 @@ class Expense(Base, Timestamped):
     category_id: Mapped[int] = mapped_column(ForeignKey("expense_categories.id"))
     vendor_id: Mapped[int | None] = mapped_column(ForeignKey("vendors.id"), nullable=True)
     amount_paise: Mapped[int] = mapped_column(Integer)
-    mode: Mapped[str] = mapped_column(String(8), default="cash")  # cash|upi|card|bank|credit|other
+    mode: Mapped[str] = mapped_column(String(8), default="upi")  # upi|cash|card|bank|credit|other
     description: Mapped[str] = mapped_column(Text, default="")
     receipt_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # unit economics (raw materials): e.g. item "Rice", qty 20, unit "kg"

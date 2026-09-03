@@ -29,7 +29,7 @@ class AdjustIn(BaseModel):
 
 
 class PaidIn(BaseModel):
-    mode: str = "cash"
+    mode: str = "upi"
     paid_on: str | None = None
 
 

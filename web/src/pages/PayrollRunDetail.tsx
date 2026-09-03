@@ -212,7 +212,7 @@ function FinalizeButton({ runId, onDone }: { runId: number; onDone: () => void }
 
 function MarkPaid({ slip, onDone }: { slip: any; onDone: () => void }) {
   const guarded = useGuarded();
-  const [mode, setMode] = useState("cash");
+  const [mode, setMode] = useState("upi");
   const pay = useMutation({
     mutationFn: () => guarded(() => api.post(`/payroll/payslips/${slip.id}/paid`, {
       mode, paid_on: todayISO(),
@@ -223,7 +223,7 @@ function MarkPaid({ slip, onDone }: { slip: any; onDone: () => void }) {
     <span className="inline-flex items-center gap-1.5">
       <select value={mode} onChange={(e) => setMode(e.target.value)}
               className="rounded border border-rule-strong bg-paper px-1.5 py-0.5 num text-xs">
-        <option value="cash">cash</option><option value="upi">UPI</option><option value="bank">bank</option>
+        <option value="upi">UPI</option><option value="cash">cash</option><option value="bank">bank</option>
       </select>
       <Button size="sm" variant="outline" onClick={() => pay.mutate()} disabled={pay.isPending}>
         Mark paid ₹{slip.net_rupees.toLocaleString("en-IN")}

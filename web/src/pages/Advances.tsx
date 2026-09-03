@@ -117,12 +117,13 @@ function RepayButton({ a, onDone }: any) {
   const guarded = useGuarded();
   const [open, setOpen] = useState(false);
   const [amt, setAmt] = useState(String(a.remaining_rupees));
+  const [via, setVia] = useState("upi");
   useEffect(() => {
-    if (open) setAmt(String(a.remaining_rupees));
+    if (open) { setAmt(String(a.remaining_rupees)); setVia("upi"); }
   }, [open, a.id, a.remaining_rupees]);
   const repay = useMutation({
     mutationFn: () => guarded(() => api.post(`/advances/${a.id}/repay`, {
-      date: todayISO(), amount_rupees: Number(amt), via: "cash", note: "cash repayment",
+      date: todayISO(), amount_rupees: Number(amt), via, note: `${via} repayment`,
     })),
     onSuccess: () => { setOpen(false); onDone(); },
   });
@@ -135,8 +136,16 @@ function RepayButton({ a, onDone }: any) {
             <Input autoFocus inputMode="decimal" value={amt}
                    onChange={(e) => setAmt(e.target.value)} className="text-right text-xl" />
           </Field>
+          <Field label="Received by">
+            <Select value={via} onChange={(e) => setVia(e.target.value)}>
+              <option value="upi">UPI</option>
+              <option value="cash">Cash</option>
+              <option value="bank">Bank transfer</option>
+              <option value="other">Other</option>
+            </Select>
+          </Field>
           <Button className="w-full" disabled={!Number(amt) || repay.isPending} onClick={() => repay.mutate()}>
-            Record cash repayment
+            Record repayment
           </Button>
         </div>
       </Sheet>
