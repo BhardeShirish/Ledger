@@ -4,7 +4,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 # server that was never started there and report "not running" while the real
 # installed Ledger carries on serving.
 $parent = Split-Path -Parent $root
-$fromPackage = $parent -and (@("Install-Ledger-New-PC.cmd", "Update-Ledger.cmd") |
+$fromPackage = $parent -and (@("Install-Ledger.cmd") |
     Where-Object { Test-Path (Join-Path $parent $_) })
 if ($fromPackage) {
     $installed = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"

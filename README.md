@@ -32,9 +32,7 @@ echo "LEDGER_DEMO_SEED=1" >> .env
 docker compose up -d
 ```
 
-**Windows, no Docker:** double-click `Start-Ootaa-Ledger.cmd`, or download
-`OotaaLedger-Setup.exe` from the [latest release](../../releases/latest) and
-run it — it needs nothing installed at all.
+**Windows, no Docker:** double-click `Start-Ootaa-Ledger.cmd`.
 
 Either way, open <http://localhost:8080> and sign in as `owner` with the
 password you set. Remove the `LEDGER_DEMO_SEED` line and start from an empty
@@ -44,67 +42,39 @@ database when you are ready for real records.
 
 ## Running it for real
 
-### Windows, nothing installed (the easiest route)
+### Windows
 
-Download `OotaaLedger-Setup.exe` from the
-[latest release](../../releases/latest) and run it. There is nothing else to
-install — no Python, no Node, no Docker. The Python runtime, the server and
-the web pages all live inside it.
+One script does everything: `Install-Ledger.cmd`. Double-click it.
 
-It installs into your own user folder, so it never asks for an administrator
-password. It offers a desktop shortcut and a *start Ledger when I sign in*
-option, adds a Start Menu entry, and uninstalls from Settings → Apps like any
-other program.
+It checks the whole machine before it changes anything — 64-bit Windows, a
+usable Python (and whether python.org is reachable if there is none), free
+disk space, write access, and whether port 8080 is already taken. If any
+check fails it prints the problem and what to do about it, and stops without
+touching your PC.
 
-The first run asks you to choose an owner password, then opens Ledger in your
-browser. Every run after that goes straight there. Closing the black window
-stops Ledger, and clicking the icon again while it is already running just
-reopens the page.
+If every check passes it works out for itself whether this is a first
+installation or an update. A first installation asks you to choose an owner
+password. An update backs the database up first, replaces only the program,
+and leaves your records, uploads and logins alone. Either way it registers
+Ledger to start when you sign in, waits until it is actually answering, and
+opens it in your browser.
 
-Your records are kept in `%LOCALAPPDATA%\OotaaLedger\data`, separate from the
-program. Updating Ledger, or uninstalling it completely, never touches them —
-verified, not assumed. To back Ledger up, copy that folder.
-
-If you would rather not install anything at all, the same release also has a
-bare `OotaaLedger.exe`. It is the identical program without the shortcuts, so
-it runs from a USB stick.
-
-Three environment variables change its behaviour if you need them:
-`LEDGER_DATA_DIR` (keep records elsewhere, such as a shared drive),
-`LEDGER_PORT` (default `8080`), and `LEDGER_HOST` — set that to `0.0.0.0` to
-reach Ledger from your phone, after reading
-[Using it from your phone](#using-it-from-your-phone).
-
-Windows SmartScreen warns you the first time, because the file is not
-code-signed. Choose *More info → Run anyway*, or build it yourself:
-
-```powershell
-cd web; npm ci; npm run build; cd ..
-pip install -r server/requirements.txt pyinstaller
-python -m PyInstaller packaging/ledger.spec --noconfirm --distpath dist-exe
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging\ledger.iss
-```
-
-### Windows, from the source ZIP
-
-The older route. It keeps Ledger running in the background from logon, which
-the single exe does not do. Everything is double-clickable, because Windows
-blocks double-clicked PowerShell files:
+Once installed, these are double-clickable too, because Windows blocks
+double-clicked PowerShell files:
 
 | I want to… | Double-click |
 |---|---|
+| Install or update Ledger | `Install-Ledger.cmd` (inside the ZIP) |
 | Start Ledger | `Start-Ootaa-Ledger.cmd` |
 | Stop Ledger | `Stop-Ootaa-Ledger.cmd` |
-| Set up a brand-new PC | `Install-Ledger-New-PC.cmd` (inside the ZIP) |
-| Update a PC that already runs Ledger | `Update-Ledger.cmd` (inside the ZIP) |
-| Build any package | `setup\Create-Package.cmd` (asks which of the three) |
+| Build a package for another PC | `setup\Create-Package.cmd` |
 
 From a terminal: `.\start.ps1`, `.\stop.ps1`, and
 `.\setup\Create-Ledger-New-PC-Package.ps1` with `-Update` or `-Fresh`.
 
-On a brand-new PC use `Install-Ledger-New-PC.cmd` — it installs Python if
-needed, registers Ledger to start at logon, and prints the first-run owner
-password. Change it in Settings → account after signing in.
+Your records live in `%LOCALAPPDATA%\Ootaa Ledger\server\data`, separate from
+the program, so an update never touches them. To back Ledger up, copy that
+folder.
 
 ### Docker (Linux, macOS, Windows, or a NAS)
 
@@ -222,8 +192,9 @@ that is quietly a week out of date is more dangerous than an error message.
 
 ## Your data
 
-Everything lives in `%LOCALAPPDATA%\OotaaLedger\data` (the installer or the
-standalone exe), `server/data` (the source ZIP) or the `ledger-data` volume
+Everything lives in `%LOCALAPPDATA%\Ootaa Ledger\server\data` (Windows, once
+installed), `server/data` (when you run it from the source folder) or the
+`ledger-data` volume
 (Docker): the SQLite database, uploaded receipts, and the signing key that
 keeps you logged in across restarts. Copy that folder and you have copied the
 whole business.
@@ -239,43 +210,37 @@ all — tested, not theorised. If you cannot stop it, copy the newest file from
 the `backups` folder instead: those are consistent snapshots, and a copy of
 one renamed to `ledger.db` starts cleanly.
 
-### Moving to a new Windows PC (installer or standalone exe)
-
-1. On the new PC, install Ledger and let it start once, so the folders exist.
-   Quit it.
-2. On the old PC, quit Ledger, then copy from
-   `%LOCALAPPDATA%\OotaaLedger\data`:
-   * `ledger.db` — every record you have
-   * the `uploads` folder — your receipt photographs, which are **not** inside
-     the database and are silently lost if you forget them
-   * `secret.key` — optional. Bringing it keeps you signed in; leaving it
-     behind only means signing in again. Your password works either way.
-3. Put those in the same folder on the new PC, overwriting what is there, and
-   start Ledger.
-
-Do not resume entering data on the old PC afterwards; the two databases do not
-synchronise.
-
-### Moving to a new Windows PC (source ZIP)
+### Moving to a new Windows PC
 
 Run `.\setup\Create-Ledger-New-PC-Package.ps1` on the old PC. It stops Ledger,
 then builds `Ledger-New-PC.zip` with a consistent database snapshot, the
-receipts and the application. Transfer that ZIP privately, extract it, and
-double-click `Install-Ledger-New-PC.cmd`. Do not resume entering data on the
-old PC afterwards; the two databases do not synchronise.
+receipts and the application. Transfer that ZIP privately, extract the whole
+of it on the new PC, and double-click `Install-Ledger.cmd`. Do not resume
+entering data on the old PC afterwards; the two databases do not synchronise.
 
 `-Fresh` builds `Ledger-Fresh-Install.zip` instead, carrying no records at all.
+
+If you would rather copy by hand, quit Ledger on both PCs and copy three
+things out of the data folder:
+
+* `ledger.db` — every record you have
+* the `uploads` folder — your receipt photographs, which are **not** inside
+  the database and are silently lost if you forget them
+* `secret.key` — optional. Bringing it keeps you signed in; leaving it behind
+  only means signing in again. Your password works either way.
 
 ### Updating a PC that already runs Ledger
 
 Run `.\setup\Create-Ledger-New-PC-Package.ps1 -Update` to build
 `Ledger-Update.zip` (program only, no records). Extract the whole ZIP on the
-target PC, double-click `Update-Ledger.cmd`, then press Ctrl+F5 in the browser.
+target PC, double-click `Install-Ledger.cmd`, then press Ctrl+F5 in the
+browser. The same script installs and updates; it recognises a PC that already
+runs Ledger and switches to updating by itself.
 
 That PC keeps its own database, receipts and logins. Before replacing anything
-the updater backs the database up to `server/data/backups/`, keeps the previous
-program alongside for rollback, and refuses to run against a package that
-carries a database of its own.
+it backs the database up to a `backups` folder beside it, verifies that backup opens,
+keeps the previous program alongside for rollback, and refuses to run against a
+package that carries a database of its own.
 
 ---
 

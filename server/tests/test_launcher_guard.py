@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 # The guard recognises a setup folder by the installer sitting beside it.
 # Renaming either file without updating start.ps1/stop.ps1 would silently
 # disable the protection, so pin the names here too.
-INSTALLER_NAMES = ("Install-Ledger-New-PC.cmd", "Update-Ledger.cmd")
+INSTALLER_NAMES = ("Install-Ledger.cmd",)
 
 
 def test_the_installer_names_the_guard_looks_for_still_exist():
@@ -65,7 +65,7 @@ def test_start_refuses_to_run_from_an_extracted_package(tmp_path, installer):
 
 
 def test_stop_refuses_to_run_from_an_extracted_package(tmp_path):
-    app = _extracted_package(tmp_path, "Update-Ledger.cmd")
+    app = _extracted_package(tmp_path, "Install-Ledger.cmd")
 
     r = subprocess.run(
         [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",

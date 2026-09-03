@@ -25,7 +25,7 @@ $ledgerUrl = "http://localhost:$ledgerPort"
 # A ZIP is extracted next to its installer, and this launcher travels inside it.
 # Run from there it would build a SECOND, empty ledger in the download folder -
 # new random password, same port - while the real one sits installed elsewhere.
-$packagedWith = @("Install-Ledger-New-PC.cmd", "Update-Ledger.cmd")
+$packagedWith = @("Install-Ledger.cmd")
 $parent = Split-Path -Parent $root
 $fromPackage = $parent -and ($packagedWith | Where-Object {
     Test-Path (Join-Path $parent $_) })
@@ -54,7 +54,7 @@ if ($fromPackage) {
         exit 1
     }
     Write-Host "Ledger is not installed on this PC yet." -ForegroundColor Red
-    Write-Host "Go up one folder and double-click Install-Ledger-New-PC.cmd first." -ForegroundColor Yellow
+    Write-Host "Go up one folder and double-click Install-Ledger.cmd first." -ForegroundColor Yellow
     Write-Host "  looked in: $installed"
     if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to close" | Out-Null }
     exit 1
@@ -85,7 +85,7 @@ function Find-Python {
 
 $python = Find-Python
 if (-not $python) {
-    throw "Python is not installed. Run Install-Ledger-New-PC.cmd."
+    throw "Python is not installed. Run Install-Ledger.cmd."
 }
 
 $distIndex = Join-Path $dist "index.html"

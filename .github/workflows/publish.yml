@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -79,59 +79,3 @@ jobs:
   # The README tells Windows users to download an exe from the latest
   # release. That link has to lead somewhere, so the tag that publishes an
   # image also builds and attaches the executable.
-  windows-exe:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: npm ci
-        working-directory: web
-      - run: npm run build
-        working-directory: web
-      - run: pip install -r server/requirements.txt pyinstaller
-      - run: python -m PyInstaller packaging/ledger.spec --noconfirm --distpath dist-exe
-
-      # Same rule as the image: never hand out a build that has not started.
-      - name: The executable must actually serve the app
-        shell: pwsh
-        run: |
-          $env:LEDGER_DATA_DIR = "$env:RUNNER_TEMP\ledger-release-check"
-          $env:LEDGER_OWNER_PASSWORD = "release-check-password"
-          $env:LEDGER_PORT = "8080"
-          $p = Start-Process .\dist-exe\OotaaLedger.exe -PassThru
-          $ok = $false
-          foreach ($i in 1..45) {
-            try {
-              if ((Invoke-WebRequest http://127.0.0.1:8080/api/health -UseBasicParsing).StatusCode -eq 200) {
-                $ok = $true; break
-              }
-            } catch { Start-Sleep 2 }
-          }
-          if (-not $ok) { throw "the executable never became healthy" }
-          if ((Invoke-WebRequest http://127.0.0.1:8080/ -UseBasicParsing).StatusCode -ne 200) {
-            throw "the web pages are not bundled"
-          }
-          Stop-Process -Id $p.Id -Force
-
-      # Inno Setup is preinstalled on the GitHub Windows runners.
-      - name: Wrap it in an installer
-        shell: pwsh
-        run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\ledger.iss
-
-      # Both are offered: the installer for people who want a Start Menu
-      # entry, and the bare exe for people who want to carry it on a stick.
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist-exe/OotaaLedger-Setup.exe
-            dist-exe/OotaaLedger.exe

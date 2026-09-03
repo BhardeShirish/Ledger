@@ -131,13 +131,11 @@ finally:
         if ($LASTEXITCODE -ne 0) { throw "The database snapshot failed." }
     }
 
-    if ($Update) {
-        Copy-Item (Join-Path $setup "Update-Ledger.ps1"),
-            (Join-Path $setup "Update-Ledger.cmd") -Destination $stage
-    } else {
-        Copy-Item (Join-Path $setup "Install-Ledger-New-PC.ps1"),
-            (Join-Path $setup "Install-Ledger-New-PC.cmd") -Destination $stage
-    }
+    # One installer for all three package kinds. It works out for itself
+    # whether this is a first installation or an update, so there is no way
+    # to run the wrong one.
+    Copy-Item (Join-Path $setup "Install-Ledger.ps1"),
+        (Join-Path $setup "Install-Ledger.cmd") -Destination $stage
     Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $output -Force
 } finally {
     if (Test-Path $stage) {
@@ -156,7 +154,7 @@ $output
 Size: $([math]::Round($archive.Length / 1MB, 1)) MB
 SHA-256: $hash
 
-Copy the ZIP to the other PC, extract it, and double-click Update-Ledger.cmd.
+Copy the ZIP to the other PC, extract it, and double-click Install-Ledger.cmd.
 That PC keeps its database, uploads and logins; only the program is replaced.
 Ledger on THIS PC was not stopped and is unaffected.
 "@
@@ -171,7 +169,7 @@ SHA-256: $hash
 
 This ZIP contains no records, no uploads and no login key.
 Ledger on THIS PC was not stopped and is unaffected.
-On the other PC, extract it and double-click Install-Ledger-New-PC.cmd.
+On the other PC, extract it and double-click Install-Ledger.cmd.
 It will ask you to choose a new owner password.
 "@
 } else {
@@ -184,7 +182,7 @@ Size: $([math]::Round($archive.Length / 1MB, 1)) MB
 SHA-256: $hash
 
 Ledger on this old PC is stopped. Copy the ZIP privately to the new laptop,
-extract it, and double-click Install-Ledger-New-PC.cmd.
+extract it, and double-click Install-Ledger.cmd.
 "@
 }
 Write-Host $summary -ForegroundColor Green
