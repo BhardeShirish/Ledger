@@ -52,6 +52,84 @@ def test_forecast_shape_and_math(client, outlet_id):
     assert f2["percent_of_target"] == round(f2["projected_rupees"] / 50000 * 100, 1), f2
 
 
+# ── A month with nothing in it must not pretend to forecast ───────────────
+#
+# The owner opens the Daily Brief on the 4th, before this month's sales have
+# been imported. "₹0 projected month-end" reads as a forecast of ruin; the
+# truth is only that the sales aren't in yet. So the projection is withheld.
+
+def _empty_month(client, outlet_id):
+    from datetime import date
+    t = date.today()
+    y, m = (t.year + 1, 1) if t.month == 12 else (t.year, t.month + 1)
+    return client.get("/api/insights/forecast", params={
+        "outlet_id": outlet_id, "month": f"{y:04d}-{m:02d}"}).json()
+
+
+def test_forecast_withholds_projection_when_no_sales_recorded(client, outlet_id):
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    f = _empty_month(client, outlet_id)
+    assert f["so_far_rupees"] == 0.0
+    assert f["has_basis"] is False
+    # Not 0.0 — that is a claim the books cannot support.
+    assert f["projected_rupees"] is None, f
+
+
+def test_forecast_withholds_mid_month_before_sales_are_imported(client, outlet_id):
+    """The real case: it is the 4th, days have elapsed, nothing is entered.
+
+    Elapsed days are not a basis — only recorded sales are. This is the exact
+    shape the live books were in when the bug was found.
+    """
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    from datetime import date
+    t = date.today()
+    f = client.get("/api/insights/forecast", params={
+        "outlet_id": outlet_id, "month": f"{t.year:04d}-{t.month:02d}"}).json()
+    assert f["so_far_rupees"] == 0.0, f
+    assert f["days_elapsed"] > 0, f
+    assert f["has_basis"] is False, f
+    assert f["projected_rupees"] is None, f
+
+
+def test_forecast_with_no_sales_does_not_call_you_behind_target(client, outlet_id):
+    """A target on an unrecorded month must not read as 'behind target'."""
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    from datetime import date
+    t = date.today()
+    y, m = (t.year + 1, 1) if t.month == 12 else (t.year, t.month + 1)
+    ym = f"{y:04d}-{m:02d}"
+    s = client.put("/api/insights/target", json={
+        "outlet_id": outlet_id, "month": ym, "amount_rupees": 50000})
+    assert s.status_code == 200
+    f = client.get("/api/insights/forecast", params={
+        "outlet_id": outlet_id, "month": ym}).json()
+    assert f["target_rupees"] == 50000.0
+    assert f["has_basis"] is False
+    assert f["on_track"] is None, f
+    assert f["percent_of_target"] is None, f
+    # The pace to reach it is still real advice and must survive.
+    assert f["pace_needed_per_day_rupees"] > 0, f
+
+
+def test_forecast_keeps_projecting_once_a_single_day_exists(client, outlet_id):
+    """One recorded day is a thin basis, but it is a basis. Don't over-gate."""
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    from datetime import date, timedelta
+    first_this = date.today().replace(day=1)
+    hi_prev = first_this - timedelta(days=1)
+    ym = f"{hi_prev.year}-{hi_prev.month:02d}"
+    r = client.put("/api/sales/manual", json={
+        "outlet_id": outlet_id, "business_date": hi_prev.replace(day=1).isoformat(),
+        "channel_kind": "cash", "amount_rupees": 1000})
+    assert r.status_code == 200, r.text[:200]
+    f = client.get("/api/insights/forecast", params={
+        "outlet_id": outlet_id, "month": ym}).json()
+    assert f["so_far_rupees"] == 1000.0
+    assert f["has_basis"] is True
+    assert f["projected_rupees"] is not None and f["projected_rupees"] > 0, f
+
+
 def test_anomalies_flags_cash_variance(client, outlet_id):
     client.post("/api/auth/stepup", json={"password": "change-me-please"})
     today = _today()

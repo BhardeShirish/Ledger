@@ -98,6 +98,11 @@ def forecast(month: str | None = None, outlet_id: int | None = None,
     projected_tail = sum(base_rate * factors.get(d.weekday(), 1.0) for d in remaining)
     projected = so_far + projected_tail
 
+    # A month with nothing recorded yet gives no basis for a projection.
+    # Printing "₹0 projected month-end" on the 4th reads as a forecast of
+    # ruin when the truth is only that this month's sales aren't in yet.
+    has_basis = so_far > 0
+
     # target & pace
     targets = get_setting_db(db, "sales_targets", {})
     target_values = [
@@ -111,7 +116,8 @@ def forecast(month: str | None = None, outlet_id: int | None = None,
         "days_elapsed": days_elapsed,
         "so_far_rupees": round(so_far / 100, 2),
         "base_rate_rupees": round(base_rate / 100, 2),
-        "projected_rupees": round(projected / 100, 2),
+        "has_basis": has_basis,
+        "projected_rupees": round(projected / 100, 2) if has_basis else None,
         "target_rupees": target,
         "outlet_id": outlets[0] if len(outlets) == 1 else None,
     }
@@ -120,8 +126,9 @@ def forecast(month: str | None = None, outlet_id: int | None = None,
         pace_needed = max(0.0, (target_paise - so_far)) / 100.0 / max(1, len(remaining))
         resp.update({
             "pace_needed_per_day_rupees": round(pace_needed, 2),
-            "on_track": projected >= target_paise,
-            "percent_of_target": round(projected / target_paise * 100, 1),
+            "on_track": projected >= target_paise if has_basis else None,
+            "percent_of_target": round(projected / target_paise * 100, 1)
+            if has_basis else None,
         })
     return resp
 

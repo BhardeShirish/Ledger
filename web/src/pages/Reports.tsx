@@ -280,18 +280,28 @@ function InsightCards({ outletId, month, daysRecorded }:
         <Card className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <SectionLabel>Month forecast</SectionLabel>
-            <Badge tone={fc.data.on_track === undefined ? "neutral"
+            <Badge tone={fc.data.projected_rupees == null ? "neutral"
+                          : fc.data.on_track === undefined ? "neutral"
                           : fc.data.on_track ? "good" : "warn"}>
-              {fc.data.on_track === undefined
+              {fc.data.projected_rupees == null
+                ? "nothing recorded yet"
+                : fc.data.on_track === undefined
                 ? "no target set"
                 : fc.data.on_track ? "on track" : "behind target"}
             </Badge>
           </div>
           <div className="num mt-1 text-2xl font-semibold">
-            {inr(Math.round((fc.data.projected_rupees ?? 0) * 100))}
-            <span className="ml-1 text-sm font-normal text-ink-faint">projected month-end</span>
+            {fc.data.projected_rupees == null
+              ? <span className="text-base font-normal text-ink-faint">
+                  No sales recorded yet this month — import or enter a day's
+                  sales and the projection appears here.
+                </span>
+              : <>
+                  {inr(Math.round(fc.data.projected_rupees * 100))}
+                  <span className="ml-1 text-sm font-normal text-ink-faint">projected month-end</span>
+                </>}
           </div>
-          {!!fc.data.target_rupees && (
+          {fc.data.projected_rupees != null && !!fc.data.target_rupees && (
             <div className="mt-2">
               <div className="h-2 overflow-hidden rounded-full bg-paper-3">
                 <div className={`h-full rounded-full ${fc.data.on_track ? "bg-good" : "bg-bad"}`}

@@ -75,8 +75,12 @@ export default function DailyBrief() {
                   value={inr(mine?.sales?.rupees_paise ?? 0)} />
         {fc.data && (
           <StatTile label="Month projection"
-                    value={inr(Math.round((fc.data.projected_rupees ?? 0) * 100))}
-                    sub={fc.data.target_rupees
+                    value={fc.data.projected_rupees == null
+                           ? "—"
+                           : inr(Math.round(fc.data.projected_rupees * 100))}
+                    sub={fc.data.projected_rupees == null
+                         ? "no sales recorded yet this month"
+                         : fc.data.target_rupees
                          ? `${fc.data.percent_of_target}% of target`
                          : "no target set"} />
         )}
