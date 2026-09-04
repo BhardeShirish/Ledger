@@ -3,6 +3,7 @@ import { useOutletContext } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useAuth, useGuarded } from "../lib/auth";
+import { explainedBySplit } from "../lib/cashdoubt";
 import { ExportButton } from "../components/DataButtons";
 import { fmtDateShort, inr, moneyCfg, todayISO } from "../lib/format";
 import { useDateParam } from "../lib/useDateParam";
@@ -53,12 +54,24 @@ export default function CashRegister() {
                         value={`− ${inr(day.data.cash_losses_paise)}`}
                         sub="from the day sheet" />
             )}
+            {(day.data.split_unknown_paise ?? 0) > 0 && (
+              <StatTile label="Part-paid bills"
+                        value={`? ${inr(day.data.split_unknown_paise)}`}
+                        sub="cash share unknown" />
+            )}
           </div>
 
           <Card className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
             <div>
               <SectionLabel>Expected in drawer</SectionLabel>
               <div className="num text-3xl font-semibold">{inr(day.data.expected_paise)}</div>
+              {(day.data.split_unknown_paise ?? 0) > 0 && (
+                <p className="mt-0.5 max-w-xs text-xs text-ink-faint">
+                  Could be up to {inr(day.data.split_unknown_paise)} more —
+                  that much was paid part cash, part online, and the report
+                  doesn't split it.
+                </p>
+              )}
             </div>
             {day.data.closure && !day.data.closure.reopened ? (
               <ClosedCard closure={day.data.closure} date={date}
@@ -223,6 +236,11 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
 
   const countedP = Math.round((Number(shownCounted) || 0) * 100);
   const variance = countedP - expectedPaise;
+  // Part-paid bills hide an unknown amount of cash sales, so the drawer
+  // counting high by up to that much is arithmetic, not a discrepancy.
+  // Only a surplus is explained: a shortage still needs chasing.
+  const splitUnknownPaise = dayData.split_unknown_paise ?? 0;
+  const splitExplains = explainedBySplit(variance, splitUnknownPaise);
   const takenP = Math.round((Number(takenHome ?? "0") || 0) * 100);
   const leftP = countedP - takenP;
   const reasonNeeded = variance !== 0;
@@ -286,14 +304,27 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
 
         {/* Variance verdict */}
         {shownCounted !== "" && (
-          <Card className={`px-4 py-3 ${variance === 0 ? "bg-good/10" : Math.abs(variance) > alertPaise ? "bg-bad/10" : ""}`}>
+          <Card className={`px-4 py-3 ${
+            variance === 0 ? "bg-good/10"
+              : splitExplains ? ""
+              : Math.abs(variance) > alertPaise ? "bg-bad/10" : ""}`}>
             <div className="flex items-center justify-between">
               <SectionLabel>Variance vs expected</SectionLabel>
               <span className={`num text-2xl font-semibold ${
-                variance === 0 ? "text-good" : variance > 0 ? "text-accent" : "text-bad"}`}>
+                variance === 0 ? "text-good"
+                  : splitExplains ? "text-ink-soft"
+                  : variance > 0 ? "text-accent" : "text-bad"}`}>
                 {inr(variance, { sign: true })}
               </span>
             </div>
+            {splitExplains && (
+              <p className="mt-1 text-xs text-ink-faint">
+                Explained: {inr(splitUnknownPaise)} of today's sales were paid
+                part cash, part online, and the sales report doesn't say how
+                much was cash. A surplus up to that much is expected — not a
+                shortage to chase.
+              </p>
+            )}
           </Card>
         )}
 

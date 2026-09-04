@@ -90,12 +90,27 @@ def expected_breakdown(db: Session, outlet_id: int, d: str) -> dict:
 
     # Vendor cash payments are already recorded as cash expenses, so no double count.
 
+    # A part-paid bill was settled across two modes, and the POS report does
+    # not say how much of it was cash. Those rupees are therefore missing
+    # from cash_sales above, and the drawer will legitimately count high by
+    # somewhere between nothing and the whole amount. Stating that band is
+    # the only honest option: guessing a share would invent a variance, and
+    # staying silent makes an unexplained surplus look like a mistake — or
+    # trains the owner to wave every alert away.
+    split_rows = (db.query(SalesDaily)
+                    .filter_by(outlet_id=outlet_id, business_date=d,
+                               channel_kind="split").all())
+    split_unknown = sum(
+        (r.total_paise if r.source == "petpooja" else (r.amount_paise or 0))
+        for r in split_rows)
+
     expected = opening + cash_sales - cash_expenses - advances - losses
     return {
         "opening_paise": opening, "opening_source": opening_src,
         "cash_sales_paise": cash_sales, "cash_expenses_paise": cash_expenses,
         "advances_given_paise": advances,
         "cash_losses_paise": losses,
+        "split_unknown_paise": split_unknown,
         "expected_paise": expected,
         "variance_alert_paise": int(get_setting_db(
             db, "variance_alert_paise", DEFAULT_VARIANCE_ALERT_PAISE)),
@@ -116,6 +131,7 @@ def day(outlet_id: int, date: str, user: User = Depends(current_user),
         "cash_expenses_paise": live["cash_expenses_paise"],
         "advances_given_paise": live["advances_given_paise"],
         "cash_losses_paise": live["cash_losses_paise"],
+        "split_unknown_paise": live["split_unknown_paise"],
         "expected_paise": live["expected_paise"],
         "variance_alert_paise": live["variance_alert_paise"],
     }
