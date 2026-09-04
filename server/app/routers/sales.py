@@ -3,6 +3,7 @@ import math
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -51,14 +52,16 @@ class ManualIn(BaseModel):
 class ChannelIn(BaseModel):
     name: str
     kind: str = "other"
-    sort: int = 50
+    # No default: the rename screen sends only a name, and writing a default
+    # here moved the channel to a new row on the till screen every rename.
+    sort: int | None = None
 
 
 @router.get("/channels")
 def channels(user: User = Depends(current_user), db: Session = Depends(get_db)):
     rows = (db.query(SalesChannel)
               .filter_by(is_active=True).order_by(SalesChannel.sort).all())
-    return [{"id": c.id, "name": c.name, "kind": c.kind} for c in rows]
+    return [{"id": c.id, "name": c.name, "kind": c.kind, "sort": c.sort} for c in rows]
 
 
 @router.post("/channels", status_code=201)
@@ -67,13 +70,18 @@ def add_channel(body: ChannelIn, user: User = Depends(require_owner),
     name = body.name.strip()
     if not name or body.kind not in CHANNEL_KINDS:
         raise HTTPException(422, "Channel name and kind are required")
-    c = SalesChannel(name=name, kind=body.kind, sort=body.sort)
+    # A new channel goes after the existing ones rather than landing on a
+    # shared default, where ties order themselves arbitrarily.
+    sort = body.sort
+    if sort is None:
+        sort = (db.query(func.max(SalesChannel.sort)).scalar() or 0) + 10
+    c = SalesChannel(name=name, kind=body.kind, sort=sort)
     db.add(c)
     db.flush()
     audit(db, None, user.id, "create", "sales_channel", c.id,
           after={"name": name, "kind": body.kind})
     db.commit()
-    return {"id": c.id, "name": c.name, "kind": c.kind}
+    return {"id": c.id, "name": c.name, "kind": c.kind, "sort": c.sort}
 
 
 @router.patch("/channels/{channel_id}")
@@ -88,11 +96,12 @@ def update_channel(channel_id: int, body: ChannelIn,
         raise HTTPException(422, "Channel name and kind are required")
     c.name = name
     c.kind = body.kind
-    c.sort = body.sort
+    if body.sort is not None:
+        c.sort = body.sort
     _audit(db, None, user.id, "update", "sales_channel", c.id,
            after={"name": c.name})
     db.commit()
-    return {"id": c.id, "name": c.name, "kind": c.kind}
+    return {"id": c.id, "name": c.name, "kind": c.kind, "sort": c.sort}
 
 
 @router.delete("/channels/{channel_id}")
