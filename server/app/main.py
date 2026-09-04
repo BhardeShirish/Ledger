@@ -19,7 +19,8 @@ from .db import Base, SessionLocal, engine  # noqa: E402
 from .models import migrate  # noqa: E402
 from .routers import (advances, admin, advisor, attendance, auth, bank, dataio,
                       dayclose, expenses, imports, insights, inventory, lists,
-                      losses, ocr, outlets, patterns, payroll, reports, sales,
+                      losses, ocr, outlets, patterns, payroll, pnl, recurring, reports,
+                      sales,
                       stats, staff, uploads, users, vendors)
 from .seed import bootstrap, demo_seed  # noqa: E402
 
@@ -145,7 +146,7 @@ API_PREFIX = "/api"
 for mod in (auth, users, outlets, staff, attendance, dayclose, expenses,
             vendors, advances, sales, imports, payroll, lists, stats,
             insights, inventory, reports, admin, uploads, dataio, ocr, bank,
-            losses, advisor, patterns):
+            losses, advisor, patterns, pnl, recurring):
     app.include_router(mod.router, prefix=API_PREFIX)
 
 

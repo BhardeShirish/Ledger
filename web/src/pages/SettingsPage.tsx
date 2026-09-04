@@ -10,6 +10,7 @@ import {
   Badge, Button, Card, ErrorNote, Field, Input, SectionLabel, Select,
   Sheet, Spinner,
 } from "../components/ui";
+import { CostGroupsCard, HealthyBandsCard, StandingCostsCard } from "../components/StandingCosts";
 
 export default function SettingsPage() {
   const { me } = useAuth();
@@ -35,6 +36,9 @@ export default function SettingsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <RulesCard />
         <DivisorCard />
+        <StandingCostsCard />
+        <CostGroupsCard />
+        <HealthyBandsCard />
         <MoneyCard />
         <OcrCard />
         <ChannelsCard />

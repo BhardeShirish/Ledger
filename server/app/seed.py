@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session
 
 from .config import ensure_dirs, read_env_or_file
+from .costgroups import guess_group
 from .models import (Employee, ExpenseCategory, Outlet, SalesChannel,
                      Shift, User)
 from .security import hash_password
@@ -44,7 +45,8 @@ def bootstrap(db: Session) -> dict:
         created["outlet"] = True
     if db.query(ExpenseCategory).count() == 0:
         for i, name in enumerate(DEFAULT_CATEGORIES):
-            db.add(ExpenseCategory(name=name, sort=(i + 1) * 10))
+            db.add(ExpenseCategory(name=name, sort=(i + 1) * 10,
+                                   cost_group=guess_group(name)))
     if db.query(SalesChannel).count() == 0:
         for name, kind, sort in DEFAULT_CHANNELS:
             db.add(SalesChannel(name=name, kind=kind, sort=sort))

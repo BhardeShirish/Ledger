@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..costgroups import GROUPS, guess_group
 from ..models import ExpenseCategory, User
 from ..security import current_user, require_owner
 
@@ -13,6 +14,11 @@ router = APIRouter(prefix="/lists", tags=["lists"])
 
 class CategoryIn(BaseModel):
     name: str
+    cost_group: str | None = None
+
+
+class CategoryGroupIn(BaseModel):
+    cost_group: str
 
 
 DEFAULT_CATEGORIES = [
@@ -24,11 +30,37 @@ DEFAULT_CATEGORIES = [
 ]
 
 
+@router.get("/cost-groups")
+def cost_groups(user: User = Depends(current_user)):
+    """The P&L lines a category can belong to, for the Settings picker."""
+    return [{"key": k, "label": label, "hint": hint}
+            for k, (label, hint) in GROUPS.items()]
+
+
 @router.get("/categories")
 def categories(user: User = Depends(current_user), db: Session = Depends(get_db)):
     rows = (db.query(ExpenseCategory)
               .order_by(ExpenseCategory.sort, ExpenseCategory.name).all())
-    return [{"id": c.id, "name": c.name, "is_active": c.is_active} for c in rows]
+    return [{"id": c.id, "name": c.name, "is_active": c.is_active,
+             "cost_group": c.cost_group or "operating",
+             "cost_group_label": GROUPS.get(c.cost_group or "operating",
+                                            ("Running costs", ""))[0]}
+            for c in rows]
+
+
+@router.patch("/categories/{category_id}/group")
+def set_category_group(category_id: int, body: CategoryGroupIn,
+                       user: User = Depends(current_user),
+                       db: Session = Depends(get_db)):
+    if body.cost_group not in GROUPS:
+        raise HTTPException(422, "That is not a P&L group.")
+    c = db.get(ExpenseCategory, category_id)
+    if c is None:
+        raise HTTPException(404, "Not found")
+    c.cost_group = body.cost_group
+    db.commit()
+    return {"id": c.id, "name": c.name, "cost_group": c.cost_group,
+            "cost_group_label": GROUPS[c.cost_group][0]}
 
 
 @router.post("/categories", status_code=201)
@@ -39,6 +71,9 @@ def add_category(body: CategoryIn, user: User = Depends(current_user),
         raise HTTPException(422, "Give the category a name.")
     if len(name) > 60:
         raise HTTPException(422, "That name is too long.")
+    if body.cost_group is not None and body.cost_group not in GROUPS:
+        raise HTTPException(422, "That is not a P&L group.")
+    group = body.cost_group or guess_group(name)
     existing = db.query(ExpenseCategory).filter(func.lower(ExpenseCategory.name) == name.lower()).first()
     if existing:
         # Adding back a category that was switched off must switch it on
@@ -46,12 +81,14 @@ def add_category(body: CategoryIn, user: User = Depends(current_user),
         if not existing.is_active:
             existing.is_active = True
             db.commit()
-        return {"id": existing.id, "name": existing.name, "is_active": True}
+        return {"id": existing.id, "name": existing.name, "is_active": True,
+                "cost_group": existing.cost_group or "operating"}
     sort = (db.query(func.max(ExpenseCategory.sort)).scalar() or 0) + 10
-    c = ExpenseCategory(name=name, sort=sort)
+    c = ExpenseCategory(name=name, sort=sort, cost_group=group)
     db.add(c)
     db.commit()
-    return {"id": c.id, "name": c.name, "is_active": True}
+    return {"id": c.id, "name": c.name, "is_active": True,
+            "cost_group": c.cost_group}
 
 
 @router.delete("/categories/{category_id}")

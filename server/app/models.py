@@ -156,6 +156,12 @@ def migrate(db_engine) -> None:
                 "ALTER TABLE expenses ADD COLUMN idempotency_key VARCHAR(64)"
             ),
         }),
+        (7, "expense_categories", {
+            "cost_group": (
+                "ALTER TABLE expense_categories ADD COLUMN cost_group "
+                "VARCHAR(16) NOT NULL DEFAULT 'operating'"
+            ),
+        }),
     ]
     with db_engine.begin() as conn:
         conn.execute(text(
@@ -204,6 +210,28 @@ def migrate(db_engine) -> None:
                 ))
             except Exception as exc:  # pragma: no cover - pre-existing dupes
                 print("[ledger] duplicate-expense guard not added:", exc)
+
+        # Give existing books their P&L groups. Without this every category
+        # lands on the 'operating' default, food cost reads as zero and the
+        # whole P&L is wrong on an upgrade — so this runs once, only over
+        # rows nobody has classified yet.
+        if inspect(conn).has_table("expense_categories"):
+            cols = {c["name"] for c in inspect(conn).get_columns("expense_categories")}
+            if "cost_group" in cols:
+                from .costgroups import guess_group
+
+                rows = conn.execute(text(
+                    "SELECT id, name FROM expense_categories "
+                    "WHERE cost_group IS NULL OR cost_group = '' "
+                    "OR cost_group = 'operating'"
+                )).fetchall()
+                for row_id, name in rows:
+                    guess = guess_group(name or "")
+                    if guess != "operating":
+                        conn.execute(
+                            text("UPDATE expense_categories SET cost_group = :g "
+                                 "WHERE id = :i"),
+                            {"g": guess, "i": row_id})
 
 
 class ShiftPattern(Base):
@@ -278,6 +306,36 @@ class ExpenseCategory(Base):
     name: Mapped[str] = mapped_column(String(80), unique=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     sort: Mapped[int] = mapped_column(Integer, default=0)
+    # Which line of the P&L this category belongs to. A flat list of
+    # categories can tell you what you spent; only a grouped one can tell
+    # you whether you are spending too much, because every restaurant
+    # benchmark is stated per group.
+    cost_group: Mapped[str] = mapped_column(String(16), default="operating")
+
+
+class RecurringCost(Base):
+    """A cost that arrives every month whether or not anyone logs it.
+
+    Rent, internet and licences are the costs most often missing from a
+    small restaurant's books, and their absence does not merely understate
+    spending — it makes margin, break-even and every ratio wrong. Recording
+    the standing amount once and posting it automatically is the only
+    version of this that survives a busy month.
+    """
+    __tablename__ = "recurring_costs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outlet_id: Mapped[int] = mapped_column(ForeignKey("outlets.id"))
+    category_id: Mapped[int] = mapped_column(ForeignKey("expense_categories.id"))
+    name: Mapped[str] = mapped_column(String(80), default="")
+    amount_paise: Mapped[int] = mapped_column(Integer, default=0)
+    day_of_month: Mapped[int] = mapped_column(Integer, default=1)
+    start_month: Mapped[str] = mapped_column(String(7))          # YYYY-MM
+    end_month: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    vendor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vendors.id"), nullable=True)
+    mode: Mapped[str] = mapped_column(String(12), default="bank")
+    note: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(default=True)
 
 
 class Expense(Base, Timestamped):

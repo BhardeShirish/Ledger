@@ -12,6 +12,7 @@ import { buildPresets, previousRange } from "../lib/ranges";
 import { ExportButton } from "../components/DataButtons";
 import SpendReview from "../components/SpendReview";
 import { PurchasePatterns, TradePatterns } from "../components/Patterns";
+import { ProfitAndLoss } from "../components/ProfitAndLoss";
 import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
 import { MenuItems } from "./MenuItems";
 function fmtDay(iso: string) {
@@ -183,6 +184,13 @@ export default function Analytics() {
           wants "what changed and what do I do" before they want axes. */}
       <SpendReview month={range.end.slice(0, 7)}
                    outletId={scopeAll ? null : outletId} />
+
+      {/* Then the operator's own scorecard: costs as a share of net sales
+          against the bands a healthy restaurant sits in. Tied to the month
+          rather than the range picker, because every published benchmark
+          is stated per month and "last 90 days" would not compare. */}
+      <ProfitAndLoss month={range.end.slice(0, 7)}
+                     outletId={scopeAll ? null : outletId} />
 
       {/* Then the two questions an owner actually asks the books: when am I
           busy, and what am I paying for. Both follow the range picker
