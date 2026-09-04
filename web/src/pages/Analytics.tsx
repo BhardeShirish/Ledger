@@ -10,6 +10,7 @@ import { useOutletContext } from "react-router-dom";
 import { moneyCfg } from "../lib/format";
 import { buildPresets, previousRange } from "../lib/ranges";
 import { ExportButton } from "../components/DataButtons";
+import SpendReview from "../components/SpendReview";
 import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
 import { MenuItems } from "./MenuItems";
 function fmtDay(iso: string) {
@@ -176,6 +177,11 @@ export default function Analytics() {
           </button>
         </div>
       </Card>
+
+      {/* The read on the month, above the charts: an owner opening this page
+          wants "what changed and what do I do" before they want axes. */}
+      <SpendReview month={range.end.slice(0, 7)}
+                   outletId={scopeAll ? null : outletId} />
 
       {/* Metric picker — order of clicking = order of importance */}
       <Card className="space-y-2.5 p-4">

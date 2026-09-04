@@ -17,10 +17,10 @@ from .config import DATA_DIR, ensure_dirs  # noqa: E402
 from .backup import run_daily_backup  # noqa: E402
 from .db import Base, SessionLocal, engine  # noqa: E402
 from .models import migrate  # noqa: E402
-from .routers import (advances, admin, attendance, auth, bank, dataio, dayclose,
-                      expenses, imports, insights, inventory, lists, losses, ocr,
-                      outlets, payroll, reports, sales, stats, staff, uploads,
-                      users, vendors)
+from .routers import (advances, admin, advisor, attendance, auth, bank, dataio,
+                      dayclose, expenses, imports, insights, inventory, lists,
+                      losses, ocr, outlets, payroll, reports, sales, stats,
+                      staff, uploads, users, vendors)
 from .seed import bootstrap, demo_seed  # noqa: E402
 
 LOG_FILE = DATA_DIR / "server.log"
@@ -145,7 +145,7 @@ API_PREFIX = "/api"
 for mod in (auth, users, outlets, staff, attendance, dayclose, expenses,
             vendors, advances, sales, imports, payroll, lists, stats,
             insights, inventory, reports, admin, uploads, dataio, ocr, bank,
-            losses):
+            losses, advisor):
     app.include_router(mod.router, prefix=API_PREFIX)
 
 

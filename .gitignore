@@ -14,5 +14,9 @@ web/tsconfig.tsbuildinfo
 test_bill.png
 Ledger-*.zip
 
+# Session-signing key, generated on first run. Publishing it would let
+# anyone forge a login for this ledger.
+secret.key
+
 # Real business data used while developing — never publish
 References/

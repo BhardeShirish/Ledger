@@ -16,7 +16,7 @@ from ..models import (Expense, SalesDaily, SalesItem, StockCount,
                       User, Vendor)
 from ..security import current_user, require_owner
 from ..util import now_local
-from .helpers import assert_outlet_access
+from .helpers import assert_outlet_access, user_outlet_ids
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -765,16 +765,28 @@ def usage(start: str, end: str, outlet_id: int,
 
 
 @router.get("/dish-profitability")
-def dish_profitability(start: str, end: str, outlet_id: int,
+def dish_profitability(start: str, end: str, outlet_id: int | None = None,
                        user: User = Depends(current_user),
                        db: Session = Depends(get_db)):
-    """Menu price − Σ(auto-learned ingredient cost) per dish."""
-    assert_outlet_access(db, user, outlet_id)
+    """Menu price − Σ(auto-learned ingredient cost) per dish.
+
+    outlet_id is optional, as it is on every other analytics endpoint: the
+    Analytics page leaves it out while "All outlets" is selected, and this
+    was the one handler that answered that with a 422.
+    """
+    if outlet_id is not None:
+        assert_outlet_access(db, user, outlet_id)
+        ids = [outlet_id]
+    else:
+        ids = user_outlet_ids(db, user)
+
     links = (db.query(StockLink)
-               .filter_by(outlet_id=outlet_id, status="confirmed").all())
+               .filter(StockLink.outlet_id.in_(ids),
+                       StockLink.status == "confirmed").all())
     last_cost = {}
     for m in (db.query(StockMovement)
-                .filter_by(outlet_id=outlet_id, type="purchase")
+                .filter(StockMovement.outlet_id.in_(ids),
+                        StockMovement.type == "purchase")
                 .order_by(StockMovement.id.desc()).all()):
         last_cost.setdefault(m.stock_item_id, m.unit_cost_paise)
     cost_by_dish: dict[str, int] = {}
@@ -784,7 +796,7 @@ def dish_profitability(start: str, end: str, outlet_id: int,
             int(round(l.coefficient * last_cost.get(l.stock_item_id, 0)))
 
     rows = (db.query(SalesItem)
-               .filter_by(outlet_id=outlet_id)
+               .filter(SalesItem.outlet_id.in_(ids))
                .filter(SalesItem.business_date >= start,
                        SalesItem.business_date <= end).all())
     agg: dict[str, dict] = {}
