@@ -479,9 +479,20 @@ $(Get-FailureReport $Python)
 
 Start-Process "http://localhost:$Port"
 
+# The new version is proven healthy, so older set-aside copies are dead weight -
+# each one is a full copy of the program. Only the newest rollback is kept, so
+# there is never more than one folder beside the install to think about.
+# Compared by name, because the folder listing and $rollback can spell the same
+# path differently (8.3 short names).
 # The new version is proven healthy, so older rollback copies are dead weight -
-# each one is a full copy of the program. Compared by name, because the folder
-# listing and $rollback can spell the same path differently (8.3 short names).
+# each one is a full copy of the program. Only the newest is kept, so there is
+# never more than one folder beside the install to think about.
+# Compared by name, because the folder listing and $rollback can spell the same
+# path differently (8.3 short names).
+#
+# ".previous-" folders are deliberately NOT swept: a replace moves the whole old
+# install aside, records and all, and that may be someone's only copy of an old
+# ledger. Deleting those stays the owner's decision.
 $keep = if ($rollback) { Split-Path $rollback -Leaf } else { "" }
 Get-ChildItem (Split-Path $Target -Parent) -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like "$(Split-Path $Target -Leaf).before-update-*" -and
@@ -502,11 +513,20 @@ Ledger is installed and running.
 Ledger is updated and running.
 Your records, receipts and logins were kept exactly as they were.
 
+Ledger lives in one place and always will:
+  $Target
+
   database backup : $(Join-Path $Target "server\data\backups\pre-update-$Stamp.db")
-  previous version: $rollback
+  rollback copy   : $rollback
+
+The rollback copy is the old program only - it holds no records. It is deleted
+automatically by the next update, so these two folders are all there will ever
+be. You can delete it yourself once the new version looks right.
+
+The folder you extracted this from is finished with and can be deleted too.
 
 Open http://localhost:$Port and press Ctrl+F5 once so the browser loads the new
-screens. Once you are happy, the previous-version folder can be deleted.
+screens.
 "@ -ForegroundColor Green
 } else {
     Write-Host @"
