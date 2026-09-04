@@ -291,6 +291,14 @@ def build_facts(db: Session, user: User, month: str | None,
     }
 
 
+SEVERITY_ORDER = {"act": 0, "watch": 1, "good": 2, "info": 3}
+
+
+def by_severity(findings: list[dict]) -> list[dict]:
+    """Act-on-this first. Applied at every exit, not just the last one."""
+    return sorted(findings, key=lambda x: SEVERITY_ORDER.get(x["severity"], 9))
+
+
 def build_findings(f: dict) -> list[dict]:
     """The rules an accountant would apply, spelled out.
 
@@ -334,8 +342,35 @@ def build_findings(f: dict) -> list[dict]:
                 f"You spent {now}% of your sales in {f['month']}"
                 + (f" (was {prev}% last month)." if prev is not None else "."))
 
+    # ── are the books even complete enough to trust? ────────────────────
+    # A restaurant does not run on 2% costs. When logged spend is a sliver
+    # of sales, every margin and break-even figure in the app is fiction,
+    # and saying so is more useful than any ratio computed from it. This
+    # runs before the comparability guard on purpose: a month too thin to
+    # compare is exactly the month most likely to be missing its costs.
+    if t["sales_rupees"] and t["spend_percent_of_sales"] is not None:
+        pct = t["spend_percent_of_sales"]
+        if pct < 25:
+            names = {c["category"].lower() for c in f["categories"]
+                     if c["rupees"] > 0}
+            missing = [label for want, label in
+                       (("rent", "rent"), ("electricity", "electricity"),
+                        ("salar", "salaries"), ("gas", "gas"))
+                       if not any(want in n for n in names)]
+            # Salaries paid through a payroll run are logged, just not as
+            # an expense category — don't accuse the owner of missing them.
+            if fv["payroll_paid_rupees"]:
+                missing = [m for m in missing if m != "salaries"]
+            add("act", "Your costs look incomplete",
+                f"You recorded ₹{t['spend_rupees']:,.0f} of spend against "
+                f"₹{t['sales_rupees']:,.0f} of sales — just {pct}%. A kitchen "
+                "rarely runs under 25%. Until the rest is logged, treat every "
+                "profit and break-even figure here as guesswork."
+                + (f" Nothing logged yet for: {', '.join(missing)}."
+                   if missing else ""))
+
     if not comparable:
-        return out
+        return by_severity(out)
 
     # ── what went up ────────────────────────────────────────────────────
     risers = [c for c in f["categories"]
@@ -416,9 +451,7 @@ def build_findings(f: dict) -> list[dict]:
             f"₹{biggest['rupees']:,.0f}, {biggest['share_percent']}% of spend. "
             f"Trimming it 10% keeps ₹{biggest['rupees'] * 0.1:,.0f} a month.")
 
-    order = {"act": 0, "watch": 1, "good": 2, "info": 3}
-    out.sort(key=lambda x: order.get(x["severity"], 9))
-    return out
+    return by_severity(out)
 
 
 @router.get("/review")

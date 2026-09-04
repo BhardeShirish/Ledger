@@ -11,6 +11,7 @@ import { moneyCfg } from "../lib/format";
 import { buildPresets, previousRange } from "../lib/ranges";
 import { ExportButton } from "../components/DataButtons";
 import SpendReview from "../components/SpendReview";
+import { PurchasePatterns, TradePatterns } from "../components/Patterns";
 import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
 import { MenuItems } from "./MenuItems";
 function fmtDay(iso: string) {
@@ -182,6 +183,15 @@ export default function Analytics() {
           wants "what changed and what do I do" before they want axes. */}
       <SpendReview month={range.end.slice(0, 7)}
                    outletId={scopeAll ? null : outletId} />
+
+      {/* Then the two questions an owner actually asks the books: when am I
+          busy, and what am I paying for. Both follow the range picker
+          above rather than the month, because "last 90 days" is the useful
+          window for a trading pattern. */}
+      <TradePatterns start={range.start} end={range.end}
+                     outletId={scopeAll ? null : outletId} />
+      <PurchasePatterns start={range.start} end={range.end}
+                        outletId={scopeAll ? null : outletId} />
 
       {/* Metric picker — order of clicking = order of importance */}
       <Card className="space-y-2.5 p-4">

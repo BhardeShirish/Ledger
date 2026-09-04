@@ -85,7 +85,7 @@ try {
     Copy-Item ($rootFiles | ForEach-Object { Join-Path $root $_ }) -Destination $payload
     Copy-Tree (Join-Path $root "server") (Join-Path $payload "server") @(
         "/XD", "data", "tests", "__pycache__", ".pytest_cache",
-        "/XF", "*.pyc", "*.log"
+        "/XF", "*.pyc", "*.log", "secret.key", "*.db"
     )
     # Only the built bundle is shipped. The target PC has no Node.js, so
     # sources, configs and package.json there would be unusable weight - and
@@ -136,6 +136,28 @@ finally:
     # to run the wrong one.
     Copy-Item (Join-Path $setup "Install-Ledger.ps1"),
         (Join-Path $setup "Install-Ledger.cmd") -Destination $stage
+    # Last line of defence. A -Fresh or -Update package promises "no data",
+    # and that promise is worth nothing if a stray key or database can ride
+    # along because someone added a folder or changed an exclusion. Check the
+    # staged tree itself rather than trusting the copy rules above: a session
+    # key shared between PCs means a login forged on one is valid on the
+    # other, and it would overwrite the target's own key and sign everybody
+    # out. The transfer package carries data deliberately, so it is exempt.
+    if ($Fresh -or $Update) {
+        # Resolve first: $env:TEMP can be a short 8.3 path while FullName is
+        # expanded, which would chop the wrong number of characters off the
+        # name this error is meant to help you find.
+        $payloadRoot = (Get-Item -LiteralPath $payload).FullName
+        $leaks = Get-ChildItem -LiteralPath $payload -Recurse -File |
+            Where-Object { $_.Name -eq "secret.key" -or $_.Extension -in ".db", ".sqlite", ".sqlite3", ".env" }
+        if ($leaks) {
+            throw ("This package promises no data, but these would ship with it: " +
+                   (($leaks | ForEach-Object {
+                       $_.FullName.Substring($payloadRoot.Length + 1) }) -join ", ") +
+                   ". Exclude them in the Copy-Tree calls above.")
+        }
+    }
+
     Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $output -Force
 } finally {
     if (Test-Path $stage) {
