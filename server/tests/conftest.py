@@ -2,8 +2,10 @@ import os
 import shutil
 from pathlib import Path
 
-# run tests against a throwaway data dir, wiped fresh every session
-_tmp = Path(__file__).parent / ".tmpdata"
+# Run tests against a throwaway data dir, wiped fresh every session. Under
+# xdist each worker gets its own, or they would fight over one SQLite file.
+_worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+_tmp = Path(__file__).parent / (f".tmpdata{_worker}" if _worker else ".tmpdata")
 shutil.rmtree(_tmp, ignore_errors=True)
 os.environ["LEDGER_DATA_DIR"] = str(_tmp)
 os.environ["LEDGER_SECRET_KEY"] = "x" * 40  # silence the short-key warning

@@ -20,3 +20,6 @@ secret.key
 
 # Real business data used while developing — never publish
 References/
+
+# Throwaway databases the test suite writes, one per parallel worker.
+server/tests/.tmpdata*/

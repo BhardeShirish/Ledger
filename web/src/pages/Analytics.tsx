@@ -12,6 +12,7 @@ import { buildPresets, previousRange } from "../lib/ranges";
 import { ExportButton } from "../components/DataButtons";
 import SpendReview from "../components/SpendReview";
 import { PurchasePatterns, TradePatterns } from "../components/Patterns";
+import { KotGaps } from "../components/KotGaps";
 import { ProfitAndLoss } from "../components/ProfitAndLoss";
 import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
 import { MenuItems } from "./MenuItems";
@@ -200,6 +201,12 @@ export default function Analytics() {
                      outletId={scopeAll ? null : outletId} />
       <PurchasePatterns start={range.start} end={range.end}
                         outletId={scopeAll ? null : outletId} />
+
+      {/* Food that left the kitchen with nothing recorded against it. It
+          sits after the trading patterns because it is a leak, not a
+          habit — you read it once you know what a normal day looks like. */}
+      <KotGaps start={range.start} end={range.end}
+               outletId={scopeAll ? null : outletId} />
 
       {/* Metric picker — order of clicking = order of importance */}
       <Card className="space-y-2.5 p-4">

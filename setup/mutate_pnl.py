@@ -8,22 +8,18 @@ page *flatter* the shop, which is the failure mode that costs money.
     python setup\\mutate_pnl.py
 """
 import io
-import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-ROOT = Path(__file__).resolve().parents[1]
-SERVER = ROOT / "server"
-PNL = SERVER / "app" / "routers" / "pnl.py"
-REC = SERVER / "app" / "routers" / "recurring.py"
-GRP = SERVER / "app" / "costgroups.py"
+from mutants import check  # noqa: E402
 
-TESTS = ["tests/test_pnl.py", "tests/test_recurring.py",
-         "tests/test_costgroups.py"]
+PNL = "server/app/routers/pnl.py"
+REC = "server/app/routers/recurring.py"
+GRP = "server/app/costgroups.py"
 
-# (file, description, find, replace)
 MUTATIONS = [
     # ── the denominator ─────────────────────────────────────────────────
     (PNL, "measure ratios on the taxed total, flattering every line",
@@ -163,48 +159,5 @@ MUTATIONS = [
 ]
 
 
-def run_tests() -> bool:
-    r = subprocess.run([sys.executable, "-m", "pytest", *TESTS, "-q", "-x"],
-                       cwd=SERVER, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
-    return r.returncode == 0
-
-
-def main() -> int:
-    originals = {p: p.read_text(encoding="utf-8") for p in (PNL, REC, GRP)}
-
-    if not run_tests():
-        print("baseline is already red — fix that first")
-        return 1
-    print("baseline green\n")
-
-    missed = []
-    try:
-        for path, name, old, new in MUTATIONS:
-            text = originals[path]
-            if text.count(old) != 1:
-                print(f"SKIP  {name}\n      anchor hit {text.count(old)} times: {old!r}")
-                return 1
-            path.write_text(text.replace(old, new, 1), encoding="utf-8")
-            if run_tests():
-                print(f"MISSED  {name}")
-                missed.append(name)
-            else:
-                print(f"caught  {name}")
-            path.write_text(text, encoding="utf-8")
-    finally:
-        for p, text in originals.items():
-            p.write_text(text, encoding="utf-8")
-
-    print()
-    if missed:
-        print(f"{len(missed)} mutation(s) survived — those rules are untested:")
-        for m in missed:
-            print(f"  - {m}")
-        return 1
-    print(f"all {len(MUTATIONS)} mutations caught")
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(check(['tests/test_pnl.py', 'tests/test_recurring.py', 'tests/test_costgroups.py'], MUTATIONS))

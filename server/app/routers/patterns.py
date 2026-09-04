@@ -578,3 +578,179 @@ def _purchase_findings(f: dict) -> list[dict]:
             "kg can't be tracked. Add item and quantity when you log them.")
 
     return by_severity(out)
+
+
+# ── kitchen tickets that never became a bill ───────────────────────────────
+#
+# Every dine-in order starts as a kitchen ticket (KOT) and should end as a
+# bill. A ticket number that never reaches a bill means food was cooked and
+# sent out with nothing recorded against it.
+#
+# The counting has to be careful, because two innocent things look like the
+# same hole. Some bills arrive from the POS with no ticket number recorded
+# at all, and those bills' numbers will sit in the sequence looking unused.
+# So the day has a range, not a figure: at most the whole gap, at least the
+# gap less the bills whose number we simply don't know. Reporting the upper
+# bound alone would accuse the kitchen of a hundred missing plates a day on
+# the strength of an import quirk.
+
+#: Beyond this, listing individual numbers stops helping and starts being a
+#: wall of digits. The count is still exact; only the printed list is cut.
+MAX_LISTED_NUMBERS = 60
+
+
+def _ticket_no(bill: SalesBill) -> int | None:
+    raw = bill.raw_json or {}
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("kot_no")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return int(text) if text.isdigit() else None
+
+
+def _runs(numbers: list[int]) -> list[str]:
+    """Consecutive numbers read as '41-47', which is how someone would say
+    it and how they would search for it in the POS."""
+    out: list[str] = []
+    for n in sorted(numbers):
+        if out:
+            lo, _, hi = out[-1].partition("-")
+            if n == int(hi or lo) + 1:
+                out[-1] = f"{lo}-{n}"
+                continue
+        out.append(str(n))
+    return out
+
+
+@router.get("/kot-gaps")
+def kot_gaps(start: str | None = None, end: str | None = None,
+             outlet_id: int | None = None,
+             user: User = Depends(current_user),
+             db: Session = Depends(get_db)):
+    lo, hi = _window(start, end)
+    outlets = _scope(db, user, outlet_id)
+    bills = (db.query(SalesBill)
+               .filter(SalesBill.outlet_id.in_(outlets),
+                       SalesBill.business_date >= lo,
+                       SalesBill.business_date <= hi).all())
+
+    per: dict[str, dict] = {}
+    for b in bills:
+        day = per.setdefault(b.business_date, {
+            "date": b.business_date, "bills": 0, "net_paise": 0,
+            "numbers": set(), "unnumbered": 0})
+        day["bills"] += 1
+        day["net_paise"] += b.net_paise or 0
+        n = _ticket_no(b)
+        if n is None:
+            day["unnumbered"] += 1
+        else:
+            day["numbers"].add(n)
+
+    days: list[dict] = []
+    for day in per.values():
+        nums = day["numbers"]
+        if not nums:
+            # Nothing to reason about: no ticket numbers arrived at all.
+            days.append({
+                "date": day["date"], "bills": day["bills"],
+                "tickets_seen": 0, "unnumbered_bills": day["unnumbered"],
+                "first": None, "last": None,
+                "missing_at_most": 0, "missing_at_least": 0,
+                "missing_numbers": [], "value_at_least_rupees": 0.0,
+                "measurable": False,
+            })
+            continue
+        first, last = min(nums), max(nums)
+        absent = [n for n in range(first, last + 1) if n not in nums]
+        at_most = len(absent)
+        at_least = max(0, at_most - day["unnumbered"])
+        avg = day["net_paise"] / day["bills"] if day["bills"] else 0
+        days.append({
+            "date": day["date"], "bills": day["bills"],
+            "tickets_seen": len(nums), "unnumbered_bills": day["unnumbered"],
+            "first": first, "last": last,
+            "missing_at_most": at_most, "missing_at_least": at_least,
+            "missing_numbers": _runs(absent[:MAX_LISTED_NUMBERS]),
+            "value_at_least_rupees": _rupees(at_least * avg),
+            "measurable": True,
+        })
+
+    days.sort(key=lambda d: d["date"])
+    measured = [d for d in days if d["measurable"]]
+    totals = {
+        "days": len(days),
+        "days_measurable": len(measured),
+        "bills": sum(d["bills"] for d in days),
+        "tickets_seen": sum(d["tickets_seen"] for d in days),
+        "unnumbered_bills": sum(d["unnumbered_bills"] for d in days),
+        "missing_at_most": sum(d["missing_at_most"] for d in days),
+        "missing_at_least": sum(d["missing_at_least"] for d in days),
+        "value_at_least_rupees": round(
+            sum(d["value_at_least_rupees"] for d in days), 2),
+    }
+    typical = median([d["missing_at_least"] for d in measured]) if measured else 0
+    totals["typical_per_day"] = round(typical, 1)
+
+    worst = sorted(measured, key=lambda d: (-d["missing_at_least"], d["date"]))[:10]
+
+    return {
+        "period": {"start": lo, "end": hi},
+        "totals": totals,
+        "days": days,
+        "worst_days": worst,
+        "findings": _kot_findings(totals, worst, measured),
+        "how": ("A kitchen ticket that never becomes a bill is food that "
+                "left the kitchen with nothing recorded against it. Bills "
+                "that arrived without a ticket number are credited against "
+                "the gap first, so the 'at least' figure is the one worth "
+                "acting on."),
+    }
+
+
+def _kot_findings(totals: dict, worst: list[dict],
+                  measured: list[dict]) -> list[dict]:
+    out: list[dict] = []
+
+    def add(sev, title, detail, **extra):
+        out.append({"severity": sev, "title": title, "detail": detail, **extra})
+
+    if not measured:
+        add("info", "No kitchen ticket numbers to check",
+            "The sales import didn't carry ticket numbers for this period, "
+            "so nothing can be said either way.")
+        return out
+
+    at_least = totals["missing_at_least"]
+    if at_least == 0:
+        add("good", "Every kitchen ticket reached a bill",
+            f"Across {totals['days_measurable']} days, "
+            f"{totals['tickets_seen']} tickets, no unexplained gaps.")
+    else:
+        add("act", f"{at_least} kitchen tickets never became a bill",
+            f"About {totals['typical_per_day']:g} a day. Valued at each "
+            f"day's average bill that is roughly "
+            f"₹{totals['value_at_least_rupees']:,.0f} of food with nothing "
+            f"recorded against it. Even if only a fraction is real, this is "
+            f"the largest single leak the ledger can see.")
+
+    if worst and worst[0]["missing_at_least"] > 0:
+        w = worst[0]
+        add("watch", f"Worst day: {w['date']}",
+            f"{w['missing_at_least']} tickets unaccounted for out of "
+            f"{w['tickets_seen']} raised. Missing numbers: "
+            f"{', '.join(w['missing_numbers'][:12])}"
+            f"{' …' if len(w['missing_numbers']) > 12 else ''}. "
+            f"Look those up in the POS and see what was ordered.")
+
+    if totals["unnumbered_bills"]:
+        share = round(totals["unnumbered_bills"] / max(1, totals["bills"]) * 100)
+        add("info", f"{share}% of bills carry no ticket number",
+            f"{totals['unnumbered_bills']} bills arrived without one, so "
+            f"they have already been credited against the gap. The true "
+            f"figure sits between {totals['missing_at_least']} and "
+            f"{totals['missing_at_most']}.")
+
+    return by_severity(out)

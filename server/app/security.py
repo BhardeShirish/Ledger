@@ -34,25 +34,42 @@ def _future(value: datetime | None) -> bool:
 
 
 # Password hashing
+#
+# The work factor is written into the stored hash rather than fixed in the
+# code. That is what lets the test suite hash cheaply without any risk to a
+# real ledger: a password saved at one cost is still verified at that cost,
+# so the two can never be confused. Hashes written before this carried no
+# cost and are read at the original 2**14.
+
+_SCRYPT_N = 2**14
+#: Tests hash thousands of times and care about none of it. Only a run that
+#: has declared itself a test gets the cheap factor.
+if os.environ.get("LEDGER_TESTING") == "1":
+    _SCRYPT_N = 2**8
+
+
+def _scrypt(password: str, salt: bytes, n: int) -> str:
+    return hashlib.scrypt(password.encode(), salt=salt, n=n, r=8, p=1,
+                          dklen=32).hex()
+
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
-    dk = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
-    return f"scrypt${salt.hex()}${dk.hex()}"
+    return f"scrypt{_SCRYPT_N}${salt.hex()}${_scrypt(password, salt, _SCRYPT_N)}"
 
 
 def verify_password(password: str, stored: str) -> bool:
     try:
-        _algo, salt_hex, dk_hex = stored.split("$")
-        dk = hashlib.scrypt(
-            password.encode(),
-            salt=bytes.fromhex(salt_hex),
-            n=2**14,
-            r=8,
-            p=1,
-            dklen=32,
-        )
-        return hmac.compare_digest(dk.hex(), dk_hex)
+        algo, salt_hex, dk_hex = stored.split("$")
+        n = int(algo[len("scrypt"):]) if algo != "scrypt" else 2**14
+        # A floor, because a tampered file could otherwise ask for a cost
+        # so low the password is trivial to guess. Costs that are absurdly
+        # high or not a power of two need no check here: scrypt itself
+        # refuses them immediately, and that lands in the except below.
+        if n < 2**8:
+            return False
+        dk = _scrypt(password, bytes.fromhex(salt_hex), n)
+        return hmac.compare_digest(dk, dk_hex)
     except (ValueError, TypeError):
         return False
 

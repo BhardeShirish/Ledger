@@ -7,16 +7,15 @@ that would either wave away a real shortage or keep crying wolf.
     python setup\\mutate_cashdoubt.py
 """
 import io
-import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-ROOT = Path(__file__).resolve().parents[1]
-WEB = ROOT / "web"
-SRC = WEB / "src" / "lib" / "cashdoubt.ts"
-TEST = "src/lib/cashdoubt.test.ts"
+from mutants import check  # noqa: E402
+
+SRC = "web/src/lib/cashdoubt.ts"
 
 MUTATIONS = [
     ("explain a shortage as well, waving away money that has gone missing",
@@ -41,45 +40,5 @@ MUTATIONS = [
 ]
 
 
-def run_tests() -> bool:
-    r = subprocess.run(["npx", "vitest", "run", TEST],
-                       cwd=WEB, capture_output=True, text=True, shell=True,
-                       encoding="utf-8", errors="replace")
-    return r.returncode == 0
-
-
-def main() -> int:
-    original = SRC.read_text(encoding="utf-8")
-
-    if not run_tests():
-        print("baseline is already red — fix that first")
-        return 1
-    print("baseline green\n")
-
-    missed = []
-    try:
-        for name, old, new in MUTATIONS:
-            if original.count(old) != 1:
-                print(f"SKIP  {name}\n      anchor hit {original.count(old)} times")
-                return 1
-            SRC.write_text(original.replace(old, new, 1), encoding="utf-8")
-            if run_tests():
-                print(f"MISSED  {name}")
-                missed.append(name)
-            else:
-                print(f"caught  {name}")
-    finally:
-        SRC.write_text(original, encoding="utf-8")
-
-    print()
-    if missed:
-        print(f"{len(missed)} mutation(s) survived — those rules are untested:")
-        for m in missed:
-            print(f"  - {m}")
-        return 1
-    print(f"all {len(MUTATIONS)} mutations caught")
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(check(['src/lib/cashdoubt.test.ts'], [(SRC, *m) for m in MUTATIONS], kind="web"))

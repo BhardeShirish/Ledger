@@ -1,0 +1,8 @@
+# Only needed to run the test suite; the app itself needs nothing here.
+#
+#     pip install -r requirements-dev.txt
+#
+pytest==9.1.1
+# Runs the suite across every core. Without it pytest.ini's "-n auto" fails,
+# and the suite takes eight and a half minutes instead of under one.
+pytest-xdist==3.8.0
