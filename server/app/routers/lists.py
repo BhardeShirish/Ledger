@@ -1,5 +1,5 @@
 """Master lists: expense categories and money display config."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -35,8 +35,17 @@ def categories(user: User = Depends(current_user), db: Session = Depends(get_db)
 def add_category(body: CategoryIn, user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
     name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "Give the category a name.")
+    if len(name) > 60:
+        raise HTTPException(422, "That name is too long.")
     existing = db.query(ExpenseCategory).filter(func.lower(ExpenseCategory.name) == name.lower()).first()
     if existing:
+        # Adding back a category that was switched off must switch it on
+        # again, or the picker keeps hiding it and the button looks dead.
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
         return {"id": existing.id, "name": existing.name, "is_active": True}
     sort = (db.query(func.max(ExpenseCategory.sort)).scalar() or 0) + 10
     c = ExpenseCategory(name=name, sort=sort)
@@ -48,7 +57,6 @@ def add_category(body: CategoryIn, user: User = Depends(current_user),
 @router.delete("/categories/{category_id}")
 def deactivate_category(category_id: int, user: User = Depends(require_owner),
                         db: Session = Depends(get_db)):
-    from fastapi import HTTPException
     c = db.get(ExpenseCategory, category_id)
     if c is None:
         raise HTTPException(404, "Not found")

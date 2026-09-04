@@ -313,10 +313,10 @@ export function AddExpenseSheet(props: {
   const [desc, setDesc] = useState("");
   const [vendorQ, setVendorQ] = useState("");
   const [vendorId, setVendorId] = useState<number | null>(null);
-  const [newVendorOpen, setNewVendorOpen] = useState(false);
-  const [newVendorName, setNewVendorName] = useState("");
   const [newCatOpen, setNewCatOpen] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [newCatErr, setNewCatErr] = useState("");
+  const [savingCat, setSavingCat] = useState(false);
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
@@ -433,14 +433,24 @@ export function AddExpenseSheet(props: {
     await qc.invalidateQueries({ queryKey: ["vendors"] });
     setVendorId(r.id);
     setVendorQ(r.name);
-    setNewVendorOpen(false);
   };
 
   const quickAddCat = async () => {
-    const r = await api.post("/lists/categories", { name: newCatName });
-    await qc.invalidateQueries({ queryKey: ["categories"] });
-    setCatId(r.id);
-    setNewCatOpen(false);
+    const name = newCatName.trim();
+    if (!name || savingCat) return;
+    setSavingCat(true);
+    setNewCatErr("");
+    try {
+      const r = await api.post("/lists/categories", { name });
+      await qc.invalidateQueries({ queryKey: ["categories"] });
+      setCatId(r.id);
+      setNewCatName("");
+      setNewCatOpen(false);
+    } catch (e: any) {
+      setNewCatErr(e?.message || "Could not add that category.");
+    } finally {
+      setSavingCat(false);
+    }
   };
 
 
@@ -533,6 +543,27 @@ export function AddExpenseSheet(props: {
               + New category
             </button>
           </div>
+          {newCatOpen && (
+            <div className="mt-2">
+              <div className="flex gap-2">
+                <Input autoFocus value={newCatName} placeholder="Category name"
+                       onChange={(e) => setNewCatName(e.target.value)}
+                       onKeyDown={(e) => {
+                         if (e.key === "Enter") { e.preventDefault(); void quickAddCat(); }
+                         if (e.key === "Escape") { setNewCatOpen(false); setNewCatErr(""); }
+                       }} />
+                <Button size="sm" disabled={!newCatName.trim() || savingCat}
+                        onClick={() => void quickAddCat()}>
+                  {savingCat ? <Spinner /> : "Add"}
+                </Button>
+                <Button size="sm" variant="ghost" aria-label="Cancel new category"
+                        onClick={() => { setNewCatOpen(false); setNewCatErr(""); }}>
+                  <X size={14} />
+                </Button>
+              </div>
+              <ErrorNote msg={newCatErr} />
+            </div>
+          )}
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -552,32 +583,22 @@ export function AddExpenseSheet(props: {
         </div>
 
         <Field label="Vendor (optional)">
-          {!newVendorOpen ? (
-            <>
-              <Input placeholder="Search or type a new name…" value={vendorQ}
-                     onChange={(e) => { setVendorQ(e.target.value); setVendorId(null); }} />
-              {vendorQ && (
-                <div className="mt-1 rounded-md border border-rule bg-paper shadow-sm">
-                  {matches.slice(0, 5).map((v) => (
-                    <button key={v.id} onClick={() => { setVendorId(v.id); setVendorQ(v.name); }}
-                            className="block w-full px-3 py-2 text-left text-sm hover:bg-paper-3">
-                      {v.name}{v.balance_rupees ? ` · owes ₹${Math.abs(v.balance_rupees)}` : ""}
-                    </button>
-                  ))}
-                  {showAddVendor && (
-                    <button onClick={quickAddVendor}
-                            className="block w-full border-t border-rule px-3 py-2 text-left text-sm font-medium text-accent hover:bg-accent-soft">
-                      ＋ Add "{vendorQ.trim()}" as a new vendor
-                    </button>
-                  )}
-                </div>
+          <Input placeholder="Search or type a new name…" value={vendorQ}
+                 onChange={(e) => { setVendorQ(e.target.value); setVendorId(null); }} />
+          {vendorQ && (
+            <div className="mt-1 rounded-md border border-rule bg-paper shadow-sm">
+              {matches.slice(0, 5).map((v) => (
+                <button key={v.id} onClick={() => { setVendorId(v.id); setVendorQ(v.name); }}
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-paper-3">
+                  {v.name}{v.balance_rupees ? ` · owes ₹${Math.abs(v.balance_rupees)}` : ""}
+                </button>
+              ))}
+              {showAddVendor && (
+                <button onClick={quickAddVendor}
+                        className="block w-full border-t border-rule px-3 py-2 text-left text-sm font-medium text-accent hover:bg-accent-soft">
+                  ＋ Add "{vendorQ.trim()}" as a new vendor
+                </button>
               )}
-            </>
-          ) : (
-            <div className="flex gap-2">
-              <Input value={newVendorName} placeholder="Vendor name"
-                     onChange={(e) => setNewVendorName(e.target.value)} />
-              <Button size="sm" variant="ghost" onClick={() => setNewVendorOpen(false)}><X size={14} /></Button>
             </div>
           )}
         </Field>
