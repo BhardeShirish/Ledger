@@ -66,6 +66,28 @@ NAV_MUTATIONS = [
     (NAV, "name the tab after the filing cabinet again",
      '{ to: "/staff/attendance", label: "Attendance", icon: CalendarCheck },',
      '{ to: "/staff/attendance", label: "Staff", icon: CalendarCheck },'),
+
+    (NAV, "strand the cash count by skipping a whole group on the phone menu",
+     "  return groups\n"
+     "    .map((g) => ({ ...g, children: g.children.filter((c) => !tabbed.has(c.to)) }))\n"
+     "    .filter((g) => g.children.length > 0);",
+     '  return groups.filter((g) => g.key !== "today");'),
+
+    (NAV, "repeat the bottom tabs inside the Everything else menu",
+     "g.children.filter((c) => !tabbed.has(c.to))",
+     "g.children.filter(() => true)"),
+
+    (NAV, "keep an empty group heading in the phone menu",
+     "    .filter((g) => g.children.length > 0);",
+     "    .filter((g) => g.children.length >= 0);"),
+
+    (NAV, "go back to naming the group after a list of its own members",
+     'key: "spending", label: "Spending", icon: CircleDollarSign,',
+     'key: "spending", label: "Suppliers & bank", icon: CircleDollarSign,'),
+
+    (NAV, "stop leading with the daily round",
+     '    key: "today", label: "Every day", icon: ClipboardList,',
+     '    key: "daily", label: "Every day", icon: ClipboardList,'),
 ]
 
 EXP_MUTATIONS = [

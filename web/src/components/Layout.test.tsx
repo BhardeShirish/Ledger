@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useOutletContext } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import Layout, { GROUPS, TABS, ownerOf } from "./Layout";
+import Layout, { GROUPS, TABS, mobileGroups, ownerOf } from "./Layout";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -123,7 +123,7 @@ describe("nav grouping", () => {
     expect(groupOf("/staff/attendance")).toBe("today");
     expect(groupOf("/staff/people")).toBe("staff");
     expect(groupOf("/money/expenses")).toBe("today");
-    expect(groupOf("/money/vendors")).toBe("money");
+    expect(groupOf("/money/vendors")).toBe("spending");
   });
 
   it("matches a child own sub-pages", () => {
@@ -162,5 +162,60 @@ describe("nav grouping", () => {
   it("names the bottom tabs after the job, not the filing cabinet", () => {
     expect(TABS.map((t) => t.label))
       .toEqual(["Home", "Attendance", "Sales", "Expenses"]);
+  });
+
+  it("reaches every page on a phone, tab or menu", () => {
+    // The bar covers three daily jobs; the menu must cover the whole rest.
+    // Closing the day had no tab and sat in the group the menu skipped, so
+    // on a phone it could not be opened at all.
+    const tabbed = new Set(TABS.map((t) => t.to));
+    const inMenu = new Set(mobileGroups().flatMap((g) => g.children.map((c) => c.to)));
+    for (const g of GROUPS) {
+      for (const c of g.children) {
+        expect(tabbed.has(c.to) || inMenu.has(c.to), `${c.to} is unreachable on a phone`)
+          .toBe(true);
+      }
+    }
+    expect(inMenu.has("/money/cash")).toBe(true);
+  });
+
+  it("does not repeat in the menu what the bottom bar already shows", () => {
+    const inMenu = mobileGroups().flatMap((g) => g.children.map((c) => c.to));
+    for (const t of TABS) expect(inMenu).not.toContain(t.to);
+  });
+
+  it("drops a group from the menu only when it is left with nothing", () => {
+    for (const g of mobileGroups()) expect(g.children.length).toBeGreaterThan(0);
+    // "Every day" must survive, because the cash count still lives there.
+    expect(mobileGroups().map((g) => g.key)).toContain("today");
+
+    // With today's nav no group is ever fully covered by tabs, so prove the
+    // rule on a nav where one is: a heading with no links under it is worse
+    // than no heading.
+    const fixture = [
+      { key: "all-tabbed", label: "All tabbed", children: [{ to: "/a" }, { to: "/b" }] },
+      { key: "part", label: "Part", children: [{ to: "/a" }, { to: "/c" }] },
+    ] as unknown as typeof GROUPS;
+    const out = mobileGroups(fixture, [{ to: "/a" }, { to: "/b" }]);
+    expect(out.map((g) => g.key)).toEqual(["part"]);
+    expect(out[0].children.map((c) => c.to)).toEqual(["/c"]);
+  });
+
+  it("does not name a group after a list of its own contents", () => {
+    // "Suppliers & bank" was the leftovers wearing a label. A group name
+    // joining two of its children with "&" is the tell.
+    for (const g of GROUPS) {
+      const names = g.children.map((c) => c.label.toLowerCase());
+      const parts = g.label.toLowerCase().split(" & ");
+      if (parts.length < 2) continue;
+      const echoes = parts.filter((p) => names.some((n) => n.includes(p)));
+      expect(echoes.length, `"${g.label}" lists its own members`).toBeLessThan(2);
+    }
+  });
+
+  it("puts money in and money out next to each other", () => {
+    const keys = GROUPS.map((g) => g.key);
+    expect(keys[0]).toBe("today");
+    expect(Math.abs(keys.indexOf("sales") - keys.indexOf("spending"))).toBe(1);
   });
 });

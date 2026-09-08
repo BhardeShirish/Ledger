@@ -33,12 +33,22 @@ export const TABS = [
 /** Accordion model for the desktop rail: parents stay collapsed; the open
  *  group reveals its children. One open group at a time.
  *
- *  Grouped by how often the work happens, not by which ledger it lands in.
- *  The four daily chores used to sit in three different groups — attendance
- *  under Staff, sales under Sales, expenses and the cash count under Money —
- *  so the daily round meant learning an accountant's filing system first.
- *  Every route belongs to exactly one group, so "which group am I in?" always
- *  has one answer. */
+ *  The first group is the daily round, lifted out by cadence: attendance,
+ *  sales, expenses and the cash count used to sit in three different groups —
+ *  attendance under Staff, sales under Sales, expenses and the cash count
+ *  under Money — so a single shift meant learning an accountant's filing
+ *  system first.
+ *
+ *  The rest are the records those entries land in, named by money direction
+ *  where there is one: Sales is money in, Spending is money out (who you buy
+ *  from, what they charge, what left the bank). An earlier pass called that
+ *  last group "Suppliers & bank", which was not a category at all — it was
+ *  the leftovers after the daily jobs were pulled out of "Money", with the
+ *  members listed in place of a name. A group whose label is an "&" of its
+ *  own contents is a junk drawer.
+ *
+ *  Every route belongs to exactly one group, so "which group am I in?"
+ *  always has one answer. */
 export const GROUPS = [
   {
     key: "today", label: "Every day", icon: ClipboardList,
@@ -58,6 +68,15 @@ export const GROUPS = [
     ],
   },
   {
+    key: "spending", label: "Spending", icon: CircleDollarSign,
+    base: "/money/vendors",
+    children: [
+      { to: "/money/vendors", label: "Suppliers" },
+      { to: "/money/unitprices", label: "What you pay per kg" },
+      { to: "/money/bank", label: "Bank statement", owner: true },
+    ],
+  },
+  {
     key: "staff", label: "Staff", icon: CalendarCheck, base: "/staff/people",
     children: [
       { to: "/staff/people", label: "People" },
@@ -66,16 +85,26 @@ export const GROUPS = [
       { to: "/staff/advances", label: "Advances", owner: true },
     ],
   },
-  {
-    key: "money", label: "Suppliers & bank", icon: CircleDollarSign,
-    base: "/money/vendors",
-    children: [
-      { to: "/money/vendors", label: "Suppliers" },
-      { to: "/money/unitprices", label: "What you pay per kg" },
-      { to: "/money/bank", label: "Bank statement", owner: true },
-    ],
-  },
 ];
+
+/**
+ * The groups as the phone's "Everything else" sheet shows them.
+ *
+ * Filtered by route, never by group. Dropping the whole "Every day" group
+ * because the bottom bar "covers it" was wrong: the bar holds Home plus three
+ * of its four children, so closing the day — the one job done at night, on a
+ * phone, standing at the till — could not be reached at all. Removing exactly
+ * the routes that have a tab means nothing can be stranded by association.
+ *
+ * Takes its inputs so the empty-group rule can be tested: with today's nav no
+ * group is ever emptied, so a test using the real data proves nothing.
+ */
+export function mobileGroups(groups: typeof GROUPS = GROUPS, tabs: { to: string }[] = TABS) {
+  const tabbed = new Set(tabs.map((t) => t.to));
+  return groups
+    .map((g) => ({ ...g, children: g.children.filter((c) => !tabbed.has(c.to)) }))
+    .filter((g) => g.children.length > 0);
+}
 
 /** The sections below the grouped nav. Declared once so the desktop rail and
  *  the mobile "All sections" sheet cannot drift apart - keeping two copies is
@@ -397,11 +426,12 @@ export default function Layout() {
       </nav>
       <Sheet open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)}
              title="Everything else">
-        {/* The bottom bar holds the four daily jobs. Everything else in the
-            app has to be reachable from here, or a phone user simply cannot
-            get to payroll, suppliers or the bank statement at all. */}
+        {/* The bottom bar holds Home and three daily jobs. Everything else in
+            the app has to be reachable from here, or a phone user simply
+            cannot get to the cash count, payroll, suppliers or the bank
+            statement at all. */}
         <div className="space-y-4">
-          {GROUPS.filter((g) => g.key !== "today")
+          {mobileGroups()
                  .filter((g) => g.children.some((c: any) => !c.owner || me.role === "owner"))
                  .map((g) => (
             <div key={g.key}>
