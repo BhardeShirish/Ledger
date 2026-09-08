@@ -5,7 +5,7 @@ export const moneyCfg = {
   code: "INR", symbol: "₹", locale: "en-IN",
   denominations: [500, 200, 100, 50, 20, 10, 5, 2, 1] as number[],
   timezone: "Asia/Kolkata",
-  restaurant_name: "Ootaa Ledger",
+  restaurant_name: "My restaurant",
 };
 
 export function inr(paise: number | null | undefined, opts?: { sign?: boolean }): string {

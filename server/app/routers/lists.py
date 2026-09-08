@@ -117,5 +117,5 @@ def money_config(user: User = Depends(current_user), db: Session = Depends(get_d
         "locale": get_setting_db(db, "currency_locale", "en-IN"),
         "denominations": sorted({int(d) for d in denoms()}, reverse=True),
         "timezone": get_setting_db(db, "timezone_name", "Asia/Kolkata"),
-        "restaurant_name": get_setting_db(db, "restaurant_name", "Ootaa Ledger"),
+        "restaurant_name": get_setting_db(db, "restaurant_name", "My restaurant"),
     }

@@ -45,7 +45,7 @@ export async function request(path: string, opts: RequestOptions = {}): Promise<
       }
     }
     throw new ApiError(
-      "Ledger server is not reachable. Close this tab and open the Ootaa Ledger desktop shortcut.",
+      "Ledger server is not reachable. Close this tab and open the Ledger desktop shortcut.",
       0,
     );
   }

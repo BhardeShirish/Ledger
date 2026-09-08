@@ -1,4 +1,4 @@
-# Ootaa Ledger installer.
+# Ledger installer.
 #
 # Double-click Install-Ledger.cmd rather than running this directly.
 #
@@ -13,12 +13,22 @@
 
 $ErrorActionPreference = "Stop"
 
-$Target    = if ($env:LEDGER_HOME) { $env:LEDGER_HOME } else { Join-Path $env:LOCALAPPDATA "Ootaa Ledger" }
+$LegacyTarget = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
+$Target    = if ($env:LEDGER_HOME) { $env:LEDGER_HOME } else { Join-Path $env:LOCALAPPDATA "Ledger" }
 $Port      = if ($env:LEDGER_PORT) { [int]$env:LEDGER_PORT } else { 8080 }
 $Bind      = if ($env:LEDGER_HOST) { $env:LEDGER_HOST } else { "127.0.0.1" }
 # A second installation somewhere else must not overwrite the real one's task.
-$TaskName  = if ($env:LEDGER_HOME) { "Ootaa Ledger Server ($(Split-Path $Target -Leaf))" }
-             else { "Ootaa Ledger Server" }
+$TaskName  = if ($env:LEDGER_HOME) { "Ledger Server ($(Split-Path $Target -Leaf))" }
+             else { "Ledger Server" }
+$LegacyTaskName = "Ootaa Ledger Server"
+# Keep an existing installation's data intact during its first neutral-name
+# update. New installations always use the Ledger location and task name.
+if (-not $env:LEDGER_HOME -and
+    -not (Test-Path (Join-Path $Target "run_ledger.py")) -and
+    (Test-Path (Join-Path $LegacyTarget "run_ledger.py"))) {
+    $Target = $LegacyTarget
+    $TaskName = $LegacyTaskName
+}
 $Stamp     = Get-Date -Format "yyyyMMdd-HHmmss"
 $PythonUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
 $MinPython = [Version]"3.10"
@@ -102,7 +112,7 @@ function Register-LedgerTask([string]$Python) {
         -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings `
-        -Description "Runs the local Ootaa Ledger server." -Force | Out-Null
+        -Description "Runs the local Ledger server." -Force | Out-Null
 }
 
 function Wait-ForLedger {
@@ -174,7 +184,7 @@ function Check([string]$Name, [bool]$Ok, [string]$Detail, [string]$Fix) {
 # ------------------------------------------------------- phase 1: checks
 
 Write-Host ""
-Write-Host "Ootaa Ledger installer" -ForegroundColor Cyan
+Write-Host "Ledger installer" -ForegroundColor Cyan
 Write-Host "Checking this PC before anything is installed." -ForegroundColor Cyan
 Write-Host ""
 
@@ -461,7 +471,7 @@ if (-not (Wait-ForLedger)) {
 
 To go back to the version that worked, delete this folder:
   $Target
-then rename '$rollback' to 'Ootaa Ledger' and run Start-Ootaa-Ledger.cmd inside it.
+then rename '$rollback' to '$(Split-Path $Target -Leaf)' and run Start-Ledger.cmd inside it.
 "@
     } else {
         "  database  : $targetDb"

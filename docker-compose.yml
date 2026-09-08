@@ -1,4 +1,4 @@
-# Ootaa Ledger — start with:  docker compose up -d
+# Ledger — start with:  docker compose up -d
 #
 # First run needs an owner password of at least 12 characters. Put it in a
 # .env file next to this one (copy .env.example), so it never reaches the
@@ -7,8 +7,8 @@
 services:
   ledger:
     build: .
-    image: ootaa-ledger:latest
-    container_name: ootaa-ledger
+    image: ledger:latest
+    container_name: ledger
     restart: unless-stopped
 
     environment:
@@ -32,7 +32,7 @@ services:
     # the image and behave the same on Windows, macOS and Linux.
     #
     # To copy your records out:
-    #   docker cp ootaa-ledger:/data ./ledger-backup
+    #   docker cp ledger:/data ./ledger-backup
     volumes:
       - ledger-data:/data
 

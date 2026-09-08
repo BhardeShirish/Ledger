@@ -1,5 +1,5 @@
 @echo off
-title Ootaa Ledger - stopping
+title Ledger - stopping
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop.ps1"
 echo.
 pause

@@ -358,8 +358,7 @@ export default function Layout() {
               ))}
           </div>
         </nav>
-        <OwnerBox onNavigate={nav}
-                  onSignOut={() => requestDiscard(() => {
+        <OwnerBox onSignOut={() => requestDiscard(() => {
                     void (async () => {
                       try {
                         await api.post("/auth/logout");
@@ -603,9 +602,7 @@ function OutboxDiscard({ item, onDiscard }: { item: { id: string; summary: strin
   );
 }
 
-function OwnerBox({ onNavigate, onSignOut }: {
-  onNavigate: (to: string) => void; onSignOut: () => void;
-}) {
+function OwnerBox({ onSignOut }: { onSignOut: () => void }) {
   const { me } = useAuth();
   if (!me) return null;
   return (
@@ -613,12 +610,7 @@ function OwnerBox({ onNavigate, onSignOut }: {
       <div className="px-2 pb-2 text-xs text-ink-faint">
         Signed in as <span className="font-semibold text-ink">{me.username}</span> ({me.role})
       </div>
-      {me.role === "owner" ? (
-        <button onClick={() => onNavigate("/settings")}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-paper-3">
-          <Settings size={15} /> Settings
-        </button>
-      ) : (
+      {me.role !== "owner" && (
         <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-ink-faint">
           <Lock size={13} /> Salary areas are owner-only
         </div>

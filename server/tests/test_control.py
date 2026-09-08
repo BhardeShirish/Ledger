@@ -104,11 +104,26 @@ def test_money_config_defaults(client, manager):
     assert r.status_code == 200
     cfg = r.json()
     assert cfg["code"] == "INR" and cfg["symbol"] == "₹"
+    assert cfg["restaurant_name"] == "My restaurant"
     assert 500 in cfg["denominations"] and 1 in cfg["denominations"]
     # manager cannot change it
     w = manager.put("/api/admin/settings",
                     json={"key": "currency_symbol", "value": "$"})
     assert w.status_code in (403, 428)
+
+
+def test_business_name_is_configurable_and_cannot_be_blank(client):
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    changed = client.put("/api/admin/settings", json={
+        "key": "restaurant_name", "value": "Corner Cafe",
+    })
+    assert changed.status_code == 200, changed.text
+    assert client.get("/api/lists/money-config").json()["restaurant_name"] == "Corner Cafe"
+
+    blank = client.put("/api/admin/settings", json={
+        "key": "restaurant_name", "value": "   ",
+    })
+    assert blank.status_code == 422
 
 
 def test_split_allocation(client, outlet_id):

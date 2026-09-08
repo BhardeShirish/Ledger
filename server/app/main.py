@@ -80,7 +80,7 @@ async def _backup_keeper():
         await asyncio.sleep(6 * 60 * 60)
 
 
-app = FastAPI(title="Ootaa Ledger", lifespan=lifespan,
+app = FastAPI(title="Ledger", lifespan=lifespan,
               docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 

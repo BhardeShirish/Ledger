@@ -20,7 +20,7 @@ $root = Split-Path -Parent $setup
 $output = Join-Path $root $(if ($Update) { "Ledger-Update.zip" }
                             elseif ($Fresh) { "Ledger-Fresh-Install.zip" }
                             else { "Ledger-New-PC.zip" })
-$stage = Join-Path $env:TEMP ("Ootaa-Ledger-Move-" + [Guid]::NewGuid().ToString("N"))
+$stage = Join-Path $env:TEMP ("Ledger-Move-" + [Guid]::NewGuid().ToString("N"))
 $payload = Join-Path $stage "Ledger"
 $sourceDb = Join-Path $root "server\data\ledger.db"
 $snapshotDb = Join-Path $payload "server\data\ledger.db"
@@ -37,8 +37,8 @@ if (-not $Fresh -and -not $Update -and -not (Test-Path $sourceDb)) {
     throw "No Ledger database was found at '$sourceDb'."
 }
 
-$rootFiles = @("start.ps1", "stop.ps1", "Start-Ootaa-Ledger.cmd",
-               "Stop-Ootaa-Ledger.cmd", "run_ledger.py", "README.md")
+$rootFiles = @("start.ps1", "stop.ps1", "Start-Ledger.cmd",
+               "Stop-Ledger.cmd", "run_ledger.py", "README.md")
 # Adding a launcher at the repo root without listing it above would silently
 # ship a package missing it. Check before stopping Ledger or building.
 $unlisted = Get-ChildItem -LiteralPath $root -File |

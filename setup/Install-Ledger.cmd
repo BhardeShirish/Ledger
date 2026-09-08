@@ -1,5 +1,5 @@
 @echo off
-title Install Ootaa Ledger
+title Install Ledger
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-Ledger.ps1"
 if errorlevel 1 (
   echo.

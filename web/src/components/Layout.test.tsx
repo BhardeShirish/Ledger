@@ -89,7 +89,7 @@ describe("Layout outlet resolution", () => {
     // Outlets still in flight: no page, and crucially no outletId=0 leaked.
     expect(seen).toEqual([]);
 
-    release([{ id: 7, name: "Ootaa", is_active: true }]);
+    release([{ id: 7, name: "Test restaurant", is_active: true }]);
     await waitFor(() => expect(screen.getByText(/page outlet/)).toBeInTheDocument());
     expect(seen).not.toContain(0);
     expect(seen.at(-1)).toBe(7);
@@ -99,7 +99,7 @@ describe("Layout outlet resolution", () => {
     localStorage.setItem("ledger_outlet", "999"); // outlet since deleted
     mocks.get.mockImplementation((url: string) =>
       url === "/outlets"
-        ? Promise.resolve([{ id: 7, name: "Ootaa", is_active: true }])
+        ? Promise.resolve([{ id: 7, name: "Test restaurant", is_active: true }])
         : Promise.resolve({}),
     );
 
@@ -110,7 +110,7 @@ describe("Layout outlet resolution", () => {
   });
 
   it("refreshes money config once signed in", async () => {
-    mocks.get.mockResolvedValue([{ id: 7, name: "Ootaa", is_active: true }]);
+    mocks.get.mockResolvedValue([{ id: 7, name: "Test restaurant", is_active: true }]);
     renderLayout();
     await waitFor(() => expect(mocks.refreshMoney).toHaveBeenCalled());
   });
@@ -119,7 +119,7 @@ describe("Layout outlet resolution", () => {
 describe("draft navigation guard", () => {
   const mockSalesApi = () => {
     mocks.get.mockImplementation((url: string) => {
-      if (url === "/outlets") return Promise.resolve([{ id: 7, name: "Ootaa", is_active: true }]);
+      if (url === "/outlets") return Promise.resolve([{ id: 7, name: "Test restaurant", is_active: true }]);
       if (url.startsWith("/sales/sheet")) {
         return Promise.resolve({
           rows: [{ channel_kind: "cash", manual_amount_rupees: null, effective_rupees: null }],
@@ -170,7 +170,7 @@ describe("draft navigation guard", () => {
   it("keeps the add-expense sheet mounted when its first amount is entered", async () => {
     const user = userEvent.setup();
     mocks.get.mockImplementation((url: string) => {
-      if (url === "/outlets") return Promise.resolve([{ id: 7, name: "Ootaa", is_active: true }]);
+      if (url === "/outlets") return Promise.resolve([{ id: 7, name: "Test restaurant", is_active: true }]);
       if (url === "/lists/categories") return Promise.resolve([
         { id: 1, name: "Vegetables", is_active: true },
       ]);
@@ -204,6 +204,13 @@ const routeOf = (p: string) => ownerOf(p)?.c.to;
 const groupOf = (p: string) => ownerOf(p)?.g.key;
 
 describe("nav grouping", () => {
+  it("shows Settings once for an owner", async () => {
+    mocks.get.mockResolvedValue([{ id: 7, name: "Test restaurant", is_active: true }]);
+    renderLayout();
+    await screen.findByText(/page outlet/);
+    expect(screen.getAllByRole("link", { name: "Settings" })).toHaveLength(1);
+  });
+
   it("keeps all four daily jobs in one group", () => {
     for (const p of ["/staff/attendance", "/sales", "/money/expenses",
                      "/money/cash"]) {

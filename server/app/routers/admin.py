@@ -48,6 +48,7 @@ DEFAULTS = {
     "currency_locale": "en-IN",
     "denominations": [500, 200, 100, 50, 20, 10, 5, 2, 1],
     "timezone_name": "Asia/Kolkata",
+    "restaurant_name": "My restaurant",
 }
 
 
@@ -98,6 +99,13 @@ def _validate_setting(key: str, value: object):
         text = str(value).strip()
         if not text:
             raise HTTPException(422, f"{key} cannot be blank")
+        return text
+    if key == "restaurant_name":
+        text = str(value).strip()
+        if not text:
+            raise HTTPException(422, "Business name cannot be blank")
+        if len(text) > 80:
+            raise HTTPException(422, "Business name must be 80 characters or fewer")
         return text
     if key == "timezone_name":
         text = str(value).strip()

@@ -46,12 +46,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t ootaa-ledger:ci .
+      - run: docker build -t ledger:ci .
       - name: It must actually serve the app, not just build
         run: |
           docker run -d --name ledger-ci -p 8080:8080 \
             -e LEDGER_OWNER_PASSWORD=ci-test-password-1234 \
-            ootaa-ledger:ci
+            ledger:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/api/health; then
               echo "healthy"; exit 0

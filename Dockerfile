@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Ootaa Ledger — one image that serves the API and the built web app.
+# Ledger — one image that serves the API and the built web app.
 #
 #   docker compose up -d
 #

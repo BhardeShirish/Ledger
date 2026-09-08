@@ -23,7 +23,7 @@ def spa_client(tmp_path, monkeypatch):
 
     secrets = tmp_path / "server" / "data"
     secrets.mkdir(parents=True)
-    (secrets / "secret.key").write_text("ootaa-TOP-SECRET-KEY", encoding="utf-8")
+    (secrets / "secret.key").write_text("ledger-TOP-SECRET-KEY", encoding="utf-8")
     (secrets / "ledger.db").write_bytes(b"SQLite format 3\x00pretend-database")
 
     monkeypatch.setenv("LEDGER_WEB_DIST", str(dist))

@@ -18,7 +18,7 @@ HEADERS = ["Invoice No.", "Date", "Biller", "KOT No.", "Payment Type",
            "Amount (Unknown Tax)", "Unknown Tax"]
 
 META = [("Date:", "2026-04-01 to 2026-08-25"), ("Name:", "Orders: Master Report"),
-        ("Restaurant Name:", "Ootaa - Authentic Kitchen")]
+        ("Restaurant Name:", "Sample Kitchen")]
 
 
 def bill_row(inv, ts, pay, status="Success", my=100.0, disc=0.0, net=None,

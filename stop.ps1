@@ -7,12 +7,20 @@ $parent = Split-Path -Parent $root
 $fromPackage = $parent -and (@("Install-Ledger.cmd") |
     Where-Object { Test-Path (Join-Path $parent $_) })
 if ($fromPackage) {
-    $installed = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
+    $installed = Join-Path $env:LOCALAPPDATA "Ledger"
+    $taskName = "Ledger Server"
+    # Keep a prior release reachable until an update has moved it to Ledger.
+    $legacyInstalled = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
+    if (-not (Test-Path (Join-Path $installed "stop.ps1")) -and
+        (Test-Path (Join-Path $legacyInstalled "stop.ps1"))) {
+        $installed = $legacyInstalled
+        $taskName = "Ootaa Ledger Server"
+    }
     Write-Host "This is the setup folder, not your installed Ledger." -ForegroundColor Yellow
     if (Test-Path (Join-Path $installed "stop.ps1")) {
         Write-Host "Stopping the Ledger installed on this PC instead..." -ForegroundColor Cyan
-        if (Get-ScheduledTask -TaskName "Ootaa Ledger Server" -ErrorAction SilentlyContinue) {
-            Stop-ScheduledTask -TaskName "Ootaa Ledger Server" -ErrorAction SilentlyContinue
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         }
         & (Join-Path $installed "stop.ps1")
         exit $LASTEXITCODE

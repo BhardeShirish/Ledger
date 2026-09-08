@@ -311,6 +311,7 @@ function MoneyCard() {
   const [msg, setMsg] = useState("");
 
   const cfg = draft ?? {
+    restaurant_name: s.data?.restaurant_name ?? "My restaurant",
     currency_code: s.data?.currency_code ?? "INR",
     currency_symbol: s.data?.currency_symbol ?? "₹",
     currency_locale: s.data?.currency_locale ?? "en-IN",
@@ -322,6 +323,7 @@ function MoneyCard() {
   const save = useMutation({
     mutationFn: () => guarded(() => api.put("/admin/settings/bulk", {
       values: {
+        restaurant_name: cfg.restaurant_name,
         currency_code: cfg.currency_code,
         currency_symbol: cfg.currency_symbol,
         currency_locale: cfg.currency_locale,
@@ -342,7 +344,10 @@ function MoneyCard() {
 
   return (
     <Card className="space-y-3.5 p-5">
-      <SectionLabel>Money & region</SectionLabel>
+      <SectionLabel>Business, money & region</SectionLabel>
+      <Field label="Business name" hint="shown on sign-in and in this browser tab">
+        <Input value={cfg.restaurant_name} onChange={(e) => set("restaurant_name", e.target.value)} />
+      </Field>
       <div className="grid grid-cols-3 gap-2">
         <Field label="Currency"><Input value={cfg.currency_code} onChange={(e) => set("currency_code", e.target.value)} /></Field>
         <Field label="Symbol"><Input value={cfg.currency_symbol} onChange={(e) => set("currency_symbol", e.target.value)} /></Field>
@@ -367,7 +372,7 @@ function MoneyCard() {
         <Input value={cfg.timezone_name} onChange={(e) => set("timezone_name", e.target.value)} />
       </Field>
       <Button disabled={!draft || save.isPending} onClick={() => save.mutate()}>
-        Save money settings
+        Save business and money settings
       </Button>
       {msg && <p className="text-xs text-good">{msg}</p>}
     </Card>

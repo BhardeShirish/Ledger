@@ -1,5 +1,5 @@
 @echo off
-title Ootaa Ledger
+title Ledger
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" -KeepAlive
 if errorlevel 1 (
   echo.

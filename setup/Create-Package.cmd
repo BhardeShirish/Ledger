@@ -1,5 +1,5 @@
 @echo off
-title Ootaa Ledger - create a package
+title Ledger - create a package
 echo.
 echo   What do you want to build?
 echo.

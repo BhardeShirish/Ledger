@@ -1,6 +1,6 @@
 """The launcher must never start a second, empty ledger from a setup folder.
 
-Extracting a package leaves Start-Ootaa-Ledger.cmd sitting in the download
+Extracting a package leaves Start-Ledger.cmd sitting in the download
 folder. Run from there it used to find no database, invent a random owner
 password and serve an empty ledger on the same port - which looks exactly
 like "my password changed and all my data is gone".

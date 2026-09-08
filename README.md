@@ -1,4 +1,4 @@
-# Ootaa Ledger — The Counter Book
+# Ledger — The Counter Book
 
 One register for a small restaurant's back office: **daily sales, expenses,
 vendor khata, staff attendance with shifts, advances and payroll** — with
@@ -90,6 +90,10 @@ Either way, open <http://localhost:8080> and sign in as `owner` with the
 password you set. Remove the `LEDGER_DEMO_SEED` line and start from an empty
 database when you are ready for real records.
 
+On first use, **My restaurant** is a neutral placeholder. Open
+**Settings → Business, money & region** to name the business; that name appears
+on the sign-in screen and in the browser tab.
+
 ---
 
 ## Running it for real
@@ -117,14 +121,14 @@ double-clicked PowerShell files:
 | I want to… | Double-click |
 |---|---|
 | Install or update Ledger | `Install-Ledger.cmd` (inside the ZIP) |
-| Start Ledger | `Start-Ootaa-Ledger.cmd` |
-| Stop Ledger | `Stop-Ootaa-Ledger.cmd` |
+| Start Ledger | `Start-Ledger.cmd` |
+| Stop Ledger | `Stop-Ledger.cmd` |
 | Build a package for another PC | `setup\Create-Package.cmd` |
 
 From a terminal: `.\start.ps1`, `.\stop.ps1`, and
 `.\setup\Create-Ledger-New-PC-Package.ps1` with `-Update` or `-Fresh`.
 
-Your records live in `%LOCALAPPDATA%\Ootaa Ledger\server\data`, separate from
+Your records live in `%LOCALAPPDATA%\Ledger\server\data`, separate from
 the program, so an update never touches them. To back Ledger up, copy that
 folder.
 
@@ -134,7 +138,7 @@ Docker is the only thing you need — no Node, no Python, no build tools, and
 no need to clone this repository. Pick a strong password and run:
 
 ```bash
-docker run -d --name ootaa-ledger \
+docker run -d --name ledger \
   -p 127.0.0.1:8080:8080 \
   -v ledger-data:/data \
   -e LEDGER_OWNER_PASSWORD='choose-a-long-password' \
@@ -166,7 +170,7 @@ docker save ghcr.io/bhardeshirish/ledger:latest | gzip > ledger-image.tar.gz   #
 
 # on the target machine
 gunzip -c ledger-image.tar.gz | docker load
-docker run -d --name ootaa-ledger -p 127.0.0.1:8080:8080 \
+docker run -d --name ledger -p 127.0.0.1:8080:8080 \
   -v ledger-data:/data -e LEDGER_OWNER_PASSWORD='choose-a-long-password' \
   --restart unless-stopped ghcr.io/bhardeshirish/ledger:latest
 ```
@@ -176,7 +180,7 @@ upgrading the container never touches your data. To take a copy off the
 machine:
 
 ```bash
-docker cp ootaa-ledger:/data ./ledger-backup
+docker cp ledger:/data ./ledger-backup
 ```
 
 The image runs as a non-root user (uid 10001) and only needs `/data` to be
@@ -241,7 +245,7 @@ that is quietly a week out of date is more dangerous than an error message.
 
 ## Your data
 
-Everything lives in `%LOCALAPPDATA%\Ootaa Ledger\server\data` (Windows, once
+Everything lives in `%LOCALAPPDATA%\Ledger\server\data` (Windows, once
 installed), `server/data` (when you run it from the source folder) or the
 `ledger-data` volume
 (Docker): the SQLite database, uploaded receipts, and the signing key that

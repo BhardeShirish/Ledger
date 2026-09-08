@@ -1,4 +1,4 @@
-/* Ootaa Ledger service worker.
+/* Ledger service worker.
  *
  * Its only jobs are: let the app OPEN without a network, and serve the static
  * bundle fast. It deliberately does NOT cache /api responses — a stale sales

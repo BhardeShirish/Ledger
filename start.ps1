@@ -1,4 +1,4 @@
-# Ootaa Ledger — Windows launcher
+# Ledger — Windows launcher
 # Usage:  .\start.ps1          → build (if needed) + serve on http://localhost:8080
 #         .\start.ps1 -Rebuild → force-rebuild the web bundle first
 #         .\start.ps1 -Lan     → also listen on the network so a phone can reach it
@@ -30,13 +30,22 @@ $parent = Split-Path -Parent $root
 $fromPackage = $parent -and ($packagedWith | Where-Object {
     Test-Path (Join-Path $parent $_) })
 if ($fromPackage) {
-    $installed = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
+    $installed = Join-Path $env:LOCALAPPDATA "Ledger"
+    $taskName = "Ledger Server"
+    # A prior release used a different install folder. Only use it to start
+    # an existing ledger until its next update; new installs always use Ledger.
+    $legacyInstalled = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
+    if (-not (Test-Path (Join-Path $installed "run_ledger.py")) -and
+        (Test-Path (Join-Path $legacyInstalled "run_ledger.py"))) {
+        $installed = $legacyInstalled
+        $taskName = "Ootaa Ledger Server"
+    }
     Write-Host ""
     Write-Host "This is the setup folder, not your installed Ledger." -ForegroundColor Yellow
     if (Test-Path (Join-Path $installed "run_ledger.py")) {
         Write-Host "Starting the Ledger that is installed on this PC instead..." -ForegroundColor Cyan
-        $task = Get-ScheduledTask -TaskName "Ootaa Ledger Server" -ErrorAction SilentlyContinue
-        if ($task) { Start-ScheduledTask -TaskName "Ootaa Ledger Server" }
+        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($task) { Start-ScheduledTask -TaskName $taskName }
         else { & (Join-Path $installed "start.ps1") @PSBoundParameters; exit $LASTEXITCODE }
         $ready = $false
         $deadline = (Get-Date).AddMinutes(2)
@@ -50,7 +59,7 @@ if ($fromPackage) {
             Start-Process $ledgerUrl
             exit 0
         }
-        Write-Host "Ledger did not answer. Open Task Scheduler and check 'Ootaa Ledger Server'." -ForegroundColor Red
+        Write-Host "Ledger did not answer. Open Task Scheduler and check '$taskName'." -ForegroundColor Red
         exit 1
     }
     Write-Host "Ledger is not installed on this PC yet." -ForegroundColor Red
@@ -151,7 +160,7 @@ $secretFile = Join-Path $dataDir "secret.key"
 if (Test-Path $secretFile) {
     $env:LEDGER_SECRET_KEY = (Get-Content $secretFile -Raw).Trim()
 } else {
-    $env:LEDGER_SECRET_KEY = "ootaa-" + [System.Guid]::NewGuid().ToString("N")
+    $env:LEDGER_SECRET_KEY = "ledger-" + [System.Guid]::NewGuid().ToString("N")
     Set-Content -Path $secretFile -Value $env:LEDGER_SECRET_KEY -NoNewline
 }
 $env:LEDGER_OWNER_USER = if ($env:LEDGER_OWNER_USER) { $env:LEDGER_OWNER_USER } else { "owner" }
