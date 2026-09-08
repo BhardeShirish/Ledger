@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useOutletContext } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import Layout from "./Layout";
+import Layout, { GROUPS, TABS, ownerOf } from "./Layout";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -93,5 +93,74 @@ describe("Layout outlet resolution", () => {
     mocks.get.mockResolvedValue([{ id: 7, name: "Ootaa", is_active: true }]);
     renderLayout();
     await waitFor(() => expect(mocks.refreshMoney).toHaveBeenCalled());
+  });
+});
+
+/**
+ * Navigation grouping rules.
+ *
+ * Two things are protected here. First, that the four daily jobs stay
+ * together: they used to sit in three different groups, so the daily round
+ * meant learning which accounting bucket each chore had been filed under.
+ * Second, that group ownership is decided by the longest matching route and
+ * not a bare prefix - /sales and /sales/bills are different jobs.
+ */
+const routeOf = (p: string) => ownerOf(p)?.c.to;
+const groupOf = (p: string) => ownerOf(p)?.g.key;
+
+describe("nav grouping", () => {
+  it("keeps all four daily jobs in one group", () => {
+    for (const p of ["/staff/attendance", "/sales", "/money/expenses",
+                     "/money/cash"]) {
+      expect(groupOf(p), p).toBe("today");
+    }
+  });
+
+  it("does not let a prefix steal a deeper page", () => {
+    expect(groupOf("/sales")).toBe("today");
+    expect(groupOf("/sales/bills")).toBe("sales");
+    expect(routeOf("/sales/bills")).toBe("/sales/bills");
+    expect(groupOf("/staff/attendance")).toBe("today");
+    expect(groupOf("/staff/people")).toBe("staff");
+    expect(groupOf("/money/expenses")).toBe("today");
+    expect(groupOf("/money/vendors")).toBe("money");
+  });
+
+  it("matches a child own sub-pages", () => {
+    expect(routeOf("/staff/people/7")).toBe("/staff/people");
+    expect(routeOf("/money/vendors/3")).toBe("/money/vendors");
+  });
+
+  it("does not match a route that merely starts with the same letters", () => {
+    expect(ownerOf("/salesman")).toBeUndefined();
+    expect(ownerOf("/money/expenses-archive")).toBeUndefined();
+  });
+
+  it("claims nothing for pages outside the groups", () => {
+    for (const p of ["/", "/reports", "/settings", "/inventory", "/brief"]) {
+      expect(ownerOf(p), p).toBeUndefined();
+    }
+  });
+
+  it("gives every route exactly one owner", () => {
+    const seenRoutes = new Set<string>();
+    for (const g of GROUPS) {
+      for (const c of g.children) {
+        expect(seenRoutes.has(c.to), c.to + " listed twice").toBe(false);
+        seenRoutes.add(c.to);
+      }
+    }
+  });
+
+  it("points every bottom tab at a real destination", () => {
+    for (const t of TABS) {
+      if (t.to === "/") continue;
+      expect(ownerOf(t.to), t.to + " is not in any group").toBeDefined();
+    }
+  });
+
+  it("names the bottom tabs after the job, not the filing cabinet", () => {
+    expect(TABS.map((t) => t.label))
+      .toEqual(["Home", "Attendance", "Sales", "Expenses"]);
   });
 });

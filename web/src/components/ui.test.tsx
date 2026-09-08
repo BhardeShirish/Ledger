@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
 
-import { Sheet } from "./ui";
+import { Input, Sheet } from "./ui";
 
 describe("Sheet", () => {
   it("traps focus, closes with Escape and restores prior focus", () => {
@@ -51,5 +51,19 @@ describe("Sheet", () => {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(result.violations).toEqual([]);
+  });
+});
+
+describe("Input", () => {
+  it("still runs a caller's own onFocus after selecting", () => {
+    const spy = vi.fn();
+    render(<Input inputMode="decimal" defaultValue="450" onFocus={spy} aria-label="Amount" />);
+    const box = screen.getByLabelText("Amount") as HTMLInputElement;
+
+    fireEvent.focus(box);
+
+    // Input destructures onFocus out of the spread, so pass-through is the
+    // only thing keeping a caller's handler alive.
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

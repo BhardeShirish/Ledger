@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { fmtDate, inr, todayISO } from "../lib/format";
-import { Badge, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
+import { Badge, Card, SectionLabel, Spinner } from "../components/ui";
 
 type Ctx = { outletId: number };
 
@@ -58,59 +58,15 @@ export default function Home() {
 
       {mine && (
         <>
-          {/* The daily flow */}
+          {/* The daily flow. This is the whole point of the page, so it is the
+              only place today's figures appear — they used to be repeated in
+              stat tiles and again in phone-only buttons directly beneath, three
+              renderings of the same two numbers stacked on top of each other. */}
           <Card className="divide-y divide-rule">
-            <FlowRow
-              n={1}
-              done={mine.attendance.done}
-              title="Mark attendance"
-              detail={
-                mine.attendance.done
-                  ? `All ${mine.attendance.total} marked`
-                  : `${mine.attendance.marked}/${mine.attendance.total} marked${mine.attendance.open ? ` · ${mine.attendance.open} awaiting out-time` : ""}`
-              }
-              to={`/staff/attendance?date=${todayISO()}`}
-              icon={<CalendarCheck size={18} />}
-            />
-            <FlowRow
-              n={2}
-              done={mine.sales.done}
-              title="Enter sales"
-              detail={mine.sales.rupees_paise > 0 ? `${inr(mine.sales.rupees_paise)} recorded` : "Not yet entered"}
-              to="/sales"
-              icon={<IndianRupee size={18} />}
-            />
-            <FlowRow
-              n={3}
-              optional
-              done={(mine.expenses.count ?? 0) > 0}
-              title="Log expenses"
-              detail={`${mine.expenses.count} today · ${inr(mine.expenses.total_paise ?? 0)} total`}
-              to="/money/expenses"
-              icon={<CircleDollarSign size={18} />}
-            />
-            <FlowRow
-              n={4}
-              done={!!mine.closed}
-              title="Close the day"
-              detail={mine.closed ? "Cash counted, day closed" : "Count the drawer when shutting shop"}
-              to="/money/cash"
-              icon={<Lock size={18} />}
-            />
+            {steps(mine).map((s) => (
+              <FlowRow key={s.n} {...s} next={s.n === nextStep(mine)} />
+            ))}
           </Card>
-
-          {/* Quick tiles */}
-          <div className="grid grid-cols-2 gap-3">
-            <StatTile label="Sales today" value={inr(mine.sales.rupees_paise)}
-                      sub={mine.sales.rupees_paise > 0 ? undefined : "not entered"} />
-            <StatTile label="Expenses today" value={inr(mine.expenses.total_paise ?? 0)}
-                      sub={`${mine.expenses.count} entries`} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 md:hidden">
-            <BigAction to="/staff/attendance" label="Attendance" primary={!mine.attendance.done} />
-            <BigAction to="/sales" label="Sales" primary={!mine.sales.done && mine.attendance.done} />
-          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <Link to="/inventory"
@@ -127,7 +83,7 @@ export default function Home() {
             <Link to="/brief"
                   className="rounded-lg border border-rule-strong bg-paper px-4 py-3 hover:bg-paper-3/50">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <ClipboardList size={15} className="text-ink-faint" /> Daily Brief
+                <ClipboardList size={15} className="text-ink-faint" /> Today's brief
               </div>
               <div className="mt-0.5 text-xs text-ink-faint">one-glance summary</div>
             </Link>
@@ -136,6 +92,45 @@ export default function Home() {
       )}
     </div>
   );
+}
+
+/** The four jobs of a day, in the order they happen. */
+export function steps(mine: any) {
+  return [
+    {
+      n: 1, done: mine.attendance.done, title: "Mark attendance",
+      detail: mine.attendance.done
+        ? `All ${mine.attendance.total} marked`
+        : `${mine.attendance.marked}/${mine.attendance.total} marked${mine.attendance.open ? ` · ${mine.attendance.open} awaiting out-time` : ""}`,
+      to: `/staff/attendance?date=${todayISO()}`,
+      icon: <CalendarCheck size={18} />,
+    },
+    {
+      n: 2, done: mine.sales.done, title: "Enter sales",
+      detail: mine.sales.rupees_paise > 0
+        ? `${inr(mine.sales.rupees_paise)} recorded` : "Not yet entered",
+      to: "/sales", icon: <IndianRupee size={18} />,
+    },
+    {
+      n: 3, optional: true, done: (mine.expenses.count ?? 0) > 0,
+      title: "Log expenses",
+      detail: `${mine.expenses.count} today · ${inr(mine.expenses.total_paise ?? 0)} total`,
+      to: "/money/expenses", icon: <CircleDollarSign size={18} />,
+    },
+    {
+      n: 4, done: !!mine.closed, title: "Close the day",
+      detail: mine.closed ? "Cash counted, day closed"
+                          : "Count the drawer when shutting shop",
+      to: "/money/cash", icon: <Lock size={18} />,
+    },
+  ];
+}
+
+/** The first job that still needs doing, skipping optional ones — so the page
+ *  always points at exactly one thing to do next, at every screen width. */
+export function nextStep(mine: any): number | null {
+  const s = steps(mine).find((x) => !x.done && !x.optional);
+  return s ? s.n : null;
 }
 
 function greeting() {
@@ -198,16 +193,20 @@ function CatchUpCard() {
   );
 }
 
-function FlowRow({ n, done, title, detail, to, icon, optional }: {
+function FlowRow({ n, done, title, detail, to, icon, optional, next }: {
   n: number; done: boolean; title: string; detail: string; to: string;
-  icon: React.ReactNode; optional?: boolean;
+  icon: React.ReactNode; optional?: boolean; next?: boolean;
 }) {
   return (
-    <Link to={to} className="flex items-center gap-3 px-4 py-3.5 hover:bg-paper-3/50">
+    <Link to={to}
+          aria-current={next ? "step" : undefined}
+          className={`flex items-center gap-3 px-4 py-3.5 ${
+            next ? "bg-accent-soft/60 hover:bg-accent-soft" : "hover:bg-paper-3/50"}`}>
       {/* Keep the step number even when a step is optional: a checklist that
           reads 1, 2, ·, 4 looks like something failed to load. */}
       <span className={`num flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
         done ? "border-good bg-good/10 text-good"
+        : next ? "border-accent bg-accent text-white"
         : optional ? "border-dashed border-rule-strong text-ink-faint" : "border-rule-strong text-ink-faint"}`}>
         {done ? "✓" : n}
       </span>
@@ -215,20 +214,11 @@ function FlowRow({ n, done, title, detail, to, icon, optional }: {
         <span className="block font-medium leading-tight">
           {title}
           {optional && <span className="ml-1.5 text-xs font-normal text-ink-faint">optional</span>}
+          {next && <span className="ml-1.5 text-xs font-semibold text-accent">do this next</span>}
         </span>
         <span className="block truncate text-sm text-ink-faint">{detail}</span>
       </span>
-      <span className={done ? "text-good" : "text-ink-faint"}>{icon}</span>
-    </Link>
-  );
-}
-
-function BigAction({ to, label, primary }: { to: string; label: string; primary?: boolean }) {
-  return (
-    <Link to={to}
-      className={`rounded-lg border px-4 py-4 text-center font-semibold ${
-        primary ? "border-accent bg-accent text-white" : "border-rule-strong bg-paper"}`}>
-      {label}
+      <span className={done ? "text-good" : next ? "text-accent" : "text-ink-faint"}>{icon}</span>
     </Link>
   );
 }

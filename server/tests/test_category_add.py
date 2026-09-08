@@ -5,6 +5,7 @@ traps sat behind it: a blank name became a nameless category, and re-adding a
 switched-off category returned "is_active": true without switching it back on,
 so the picker kept hiding it and the button still looked dead.
 """
+from datetime import date
 
 
 def _names(client):
@@ -21,8 +22,10 @@ def test_a_new_category_can_be_added_and_then_used(client, outlet_id):
     assert "Festival Sweets" in listed
     assert listed["Festival Sweets"]["id"] == cat["id"]
 
+    # Today, not a fixed day: a hard-coded date silently ages out of the edit
+    # window and the test starts failing on a date nobody chose.
     spend = client.post("/api/expenses", json={
-        "outlet_id": outlet_id, "business_date": "2026-09-04",
+        "outlet_id": outlet_id, "business_date": date.today().isoformat(),
         "category_id": cat["id"], "amount_rupees": 250})
     assert spend.status_code == 201, spend.text
 

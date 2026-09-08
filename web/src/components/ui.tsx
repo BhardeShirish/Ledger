@@ -45,9 +45,28 @@ export const Field = ({ label, hint, children, className }: {
 export const inputCls =
   "w-full rounded-md border border-rule-strong bg-paper px-3 py-2.5 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30 num";
 
-export const Input = (p: React.InputHTMLAttributes<HTMLInputElement>) => (
-  <input {...p} className={clsx(inputCls, p.className)} />
-);
+/**
+ * A number field selects its contents when focused.
+ *
+ * Correcting 450 to 540 otherwise means backspacing the old figure first,
+ * every time, on every money field in the app. Text fields keep the normal
+ * caret behaviour — selecting a whole note or item name on tap would fight
+ * the person editing one word of it.
+ */
+export const Input = ({ onFocus, ...p }: React.InputHTMLAttributes<HTMLInputElement>) => {
+  const numeric = p.inputMode === "decimal" || p.inputMode === "numeric"
+    || p.type === "number";
+  return (
+    <input
+      {...p}
+      onFocus={(e) => {
+        if (numeric) e.currentTarget.select();
+        onFocus?.(e);
+      }}
+      className={clsx(inputCls, p.className)}
+    />
+  );
+};
 
 export const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement>) => (
   <select {...p} className={clsx(inputCls, p.className)} />

@@ -156,7 +156,14 @@ function ClosedCard({ closure, date, onReopened }: {
       </Badge>
       {canAsk && (
         <Button variant="outline" size="sm" disabled={reopen.isPending}
-                onClick={() => reopen.mutate()}>
+                onClick={() => {
+                  // A closed day is a signed-off cash count. One stray tap
+                  // should not quietly undo it.
+                  if (window.confirm(
+                    "Reopen this day and recount the drawer?\n\n"
+                    + "The count you saved will be set aside until you close "
+                    + "the day again.")) reopen.mutate();
+                }}>
           Reopen &amp; recount
           {!isToday && me?.role === "owner" ? " (password)" : ""}
         </Button>

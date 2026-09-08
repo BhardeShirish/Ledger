@@ -20,28 +20,46 @@ type OutletRow = { id: number; name: string };
 
 const OUTLETS_CACHE = "ledger_outlets";
 
-const TABS = [
+// The bottom bar names the four things done every day. Naming the *action*
+// matters: "Staff" made someone hunt for attendance, because the label
+// described a filing cabinet rather than the job in front of them.
+export const TABS = [
   { to: "/", label: "Home", icon: Home },
+  { to: "/staff/attendance", label: "Attendance", icon: CalendarCheck },
   { to: "/sales", label: "Sales", icon: IndianRupee },
-  { to: "/staff/attendance", label: "Staff", icon: CalendarCheck },
-  { to: "/money/expenses", label: "Money", icon: CircleDollarSign },
+  { to: "/money/expenses", label: "Expenses", icon: CircleDollarSign },
 ];
 
 /** Accordion model for the desktop rail: parents stay collapsed; the open
- *  group reveals its children. One open group at a time. */
-const GROUPS = [
+ *  group reveals its children. One open group at a time.
+ *
+ *  Grouped by how often the work happens, not by which ledger it lands in.
+ *  The four daily chores used to sit in three different groups — attendance
+ *  under Staff, sales under Sales, expenses and the cash count under Money —
+ *  so the daily round meant learning an accountant's filing system first.
+ *  Every route belongs to exactly one group, so "which group am I in?" always
+ *  has one answer. */
+export const GROUPS = [
   {
-    key: "sales", label: "Sales", icon: IndianRupee, base: "/sales",
+    key: "today", label: "Every day", icon: ClipboardList,
+    base: "/staff/attendance",
     children: [
-      { to: "/sales", label: "Day sheet" },
-      { to: "/sales/bills", label: "Bills & history" },
-      { to: "/sales/import", label: "Petpooja import", owner: true },
+      { to: "/staff/attendance", label: "Attendance" },
+      { to: "/sales", label: "Enter sales" },
+      { to: "/money/expenses", label: "Expenses" },
+      { to: "/money/cash", label: "Cash & close day" },
     ],
   },
   {
-    key: "staff", label: "Staff", icon: CalendarCheck, base: "/staff/attendance",
+    key: "sales", label: "Sales records", icon: IndianRupee, base: "/sales/bills",
     children: [
-      { to: "/staff/attendance", label: "Attendance" },
+      { to: "/sales/bills", label: "Bills & history" },
+      { to: "/sales/import", label: "Import from POS", owner: true },
+    ],
+  },
+  {
+    key: "staff", label: "Staff", icon: CalendarCheck, base: "/staff/people",
+    children: [
       { to: "/staff/people", label: "People" },
       { to: "/staff/shifts", label: "Shifts board" },
       { to: "/staff/payroll", label: "Payroll", owner: true },
@@ -49,12 +67,11 @@ const GROUPS = [
     ],
   },
   {
-    key: "money", label: "Money", icon: CircleDollarSign, base: "/money/expenses",
+    key: "money", label: "Suppliers & bank", icon: CircleDollarSign,
+    base: "/money/vendors",
     children: [
-      { to: "/money/expenses", label: "Expenses" },
-      { to: "/money/vendors", label: "Vendors" },
-      { to: "/money/cash", label: "Cash register" },
-      { to: "/money/unitprices", label: "Unit prices" },
+      { to: "/money/vendors", label: "Suppliers" },
+      { to: "/money/unitprices", label: "What you pay per kg" },
       { to: "/money/bank", label: "Bank statement", owner: true },
     ],
   },
@@ -72,11 +89,11 @@ const SECTIONS: {
     match: (p) => p.startsWith("/inventory"),
   },
   {
-    to: "/brief", label: "Daily Brief", icon: ClipboardList,
+    to: "/brief", label: "Today's brief", icon: ClipboardList,
     match: (p) => p.startsWith("/brief"),
   },
   {
-    to: "/reports", label: "Dashboard", icon: LayoutDashboard,
+    to: "/reports", label: "Monthly reports", icon: LayoutDashboard,
     match: (p) => p.startsWith("/reports") && !p.includes("analytics"),
   },
   {
@@ -88,6 +105,21 @@ const SECTIONS: {
     match: (p) => p.startsWith("/settings"),
   },
 ];
+
+/**
+ * Which nav entry owns a path.
+ *
+ * Decided by the longest matching child route, never by a bare prefix: /sales
+ * opens "Every day" but /sales/bills belongs to "Sales records", and a prefix
+ * test would hand both to whichever group was declared first. Returns the
+ * winning child and its group, or undefined for pages outside the groups.
+ */
+export function ownerOf(pathname: string) {
+  return GROUPS
+    .flatMap((g) => g.children.map((c) => ({ g, c })))
+    .filter(({ c }) => pathname === c.to || pathname.startsWith(c.to + "/"))
+    .sort((a, b) => b.c.to.length - a.c.to.length)[0];
+}
 
 export default function Layout() {
   const { me, offline: authOffline } = useAuth();
@@ -122,10 +154,9 @@ export default function Layout() {
   const { refresh: refreshMoney } = useMoney();
   useEffect(() => { void refreshMoney(); }, [refreshMoney]);
 
-  // accordion: the group owning the current path is open
-  const activeGroup = GROUPS.find((g) => loc.pathname.startsWith(g.base + "/")
-    || (loc.pathname === g.base && g.base !== "/money/expenses")
-    || loc.pathname.startsWith(g.key === "sales" ? "/sales" : `/${g.key}`));
+  // Accordion: the group owning the current path is open.
+  const activeChild = ownerOf(loc.pathname);
+  const activeGroup = activeChild?.g;
   const [openGroup, setOpenGroup] = useState<string | null>(activeGroup?.key ?? null);
   useEffect(() => {
     if (activeGroup) setOpenGroup(activeGroup.key);
@@ -218,8 +249,7 @@ export default function Layout() {
           {GROUPS.filter((g) => g.children.some((c: any) => !c.owner || me.role === "owner"))
                  .map((g) => {
             const visible = g.children.filter((c: any) => !c.owner || me.role === "owner");
-            const childActive = visible.some((c: any) =>
-              c.to === g.base ? loc.pathname === c.to : loc.pathname.startsWith(c.to));
+            const childActive = activeGroup?.key === g.key;
             const isOpen = openGroup === g.key;
             return (
               <div key={g.key}>
@@ -241,9 +271,7 @@ export default function Layout() {
                 {isOpen && (
                   <div className="ml-[15px] border-l border-rule pl-2">
                     {visible.map((c: any) => {
-                      const a = c.to === g.base
-                        ? loc.pathname === c.to
-                        : loc.pathname.startsWith(c.to);
+                      const a = activeChild?.c.to === c.to;
                       return (
                         <Link key={c.to} to={c.to}
                               className={clsx(
@@ -341,12 +369,8 @@ export default function Layout() {
       <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-rule-strong bg-paper/95 backdrop-blur md:hidden"
            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {TABS.map(({ to, label, icon: Icon }) => {
-          const active =
-            to === "/" ? loc.pathname === "/"
-          : to === "/sales" ? loc.pathname.startsWith("/sales")
-          : to === "/staff/attendance" ? loc.pathname.startsWith("/staff")
-          : to === "/money/expenses" ? loc.pathname.startsWith("/money")
-          : false;
+          const active = to === "/" ? loc.pathname === "/"
+                                    : activeChild?.c.to === to;
           return (
             <Link key={to} to={to}
               className={clsx(
@@ -360,7 +384,11 @@ export default function Layout() {
         <button onClick={() => setMobileMenuOpen(true)}
                 className={clsx(
                   "flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium",
+                  // Highlight whenever the current page isn't one of the four
+                  // daily tabs, so the bar never shows nothing selected.
                   SECTIONS.some((s) => s.match(loc.pathname))
+                    || (loc.pathname !== "/"
+                        && !TABS.some((t) => activeChild?.c.to === t.to))
                     ? "text-accent" : "text-ink-faint",
                 )}>
           <Menu size={20} strokeWidth={1.75} />
@@ -368,17 +396,45 @@ export default function Layout() {
         </button>
       </nav>
       <Sheet open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)}
-             title="All sections">
-        <div className="grid grid-cols-2 gap-2">
-          {SECTIONS
-            .filter((s) => !s.owner || me.role === "owner")
-            .map(({ to, label, icon: Icon }) => (
-              <Link key={to} to={to} onClick={() => setMobileMenuOpen(false)}
-                    className="flex items-center gap-2 rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
-                <Icon size={16} strokeWidth={1.75} className="shrink-0 text-ink-faint" />
-                {label}
-              </Link>
-            ))}
+             title="Everything else">
+        {/* The bottom bar holds the four daily jobs. Everything else in the
+            app has to be reachable from here, or a phone user simply cannot
+            get to payroll, suppliers or the bank statement at all. */}
+        <div className="space-y-4">
+          {GROUPS.filter((g) => g.key !== "today")
+                 .filter((g) => g.children.some((c: any) => !c.owner || me.role === "owner"))
+                 .map((g) => (
+            <div key={g.key}>
+              <div className="label-caps mb-1.5 flex items-center gap-1.5">
+                <g.icon size={13} strokeWidth={1.75} className="text-ink-faint" />
+                {g.label}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {g.children
+                  .filter((c: any) => !c.owner || me.role === "owner")
+                  .map((c: any) => (
+                    <Link key={c.to} to={c.to} onClick={() => setMobileMenuOpen(false)}
+                          className="rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
+                      {c.label}
+                    </Link>
+                  ))}
+              </div>
+            </div>
+          ))}
+          <div>
+            <div className="label-caps mb-1.5">Reports & setup</div>
+            <div className="grid grid-cols-2 gap-2">
+              {SECTIONS
+                .filter((s) => !s.owner || me.role === "owner")
+                .map(({ to, label, icon: Icon }) => (
+                  <Link key={to} to={to} onClick={() => setMobileMenuOpen(false)}
+                        className="flex items-center gap-2 rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
+                    <Icon size={16} strokeWidth={1.75} className="shrink-0 text-ink-faint" />
+                    {label}
+                  </Link>
+                ))}
+            </div>
+          </div>
         </div>
       </Sheet>
       <Sheet open={outboxOpen} onClose={() => setOutboxOpen(false)}

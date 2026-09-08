@@ -36,7 +36,14 @@ export default function ExpensesList() {
   const vendors = useQuery({ queryKey: ["vendors"], queryFn: () => api.get("/vendors") });
   const list = useQuery({
     queryKey: ["expenses", outletId, period],
-    queryFn: () => api.get(`/expenses?outlet_id=${outletId}&start=${period}-01&end=${period}-31`),
+    // Not `${period}-31`: February has no 31st. It happens to work today only
+    // because the dates are compared as text, which is not a thing to rely on.
+    queryFn: () => {
+      const [y, m] = period.split("-").map(Number);
+      const last = new Date(y, m, 0).getDate();
+      return api.get(`/expenses?outlet_id=${outletId}&start=${period}-01`
+                     + `&end=${period}-${String(last).padStart(2, "0")}`);
+    },
   });
 
   const create = useMutation({
@@ -321,8 +328,21 @@ export function AddExpenseSheet(props: {
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
   const [multi, setMulti] = useState(false);
-  const [lines, setLines] = useState<{ item: string; qty: string; unit: string;
-                                       amount: string }[]>([]);
+  // Rows carry a stable id. Keying by array index makes React reuse the wrong
+  // DOM node when a middle row is deleted, which steals the cursor mid-typing.
+  const lineSeq = useRef(0);
+  const newLine = () => ({ id: ++lineSeq.current, item: "", qty: "",
+                           unit: "kg", amount: "" });
+  const [lines, setLines] = useState<{ id: number; item: string; qty: string;
+                                       unit: string; amount: string }[]>([]);
+  // The row to put the cursor in once it renders — always the one just added,
+  // so a long bill is typed straight down without reaching for the mouse.
+  const [focusLine, setFocusLine] = useState<number | null>(null);
+  const addLine = () => {
+    const row = newLine();
+    setLines((x) => [...x, row]);
+    setFocusLine(row.id);
+  };
   const [billTotal, setBillTotal] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [receiptPath, setReceiptPath] = useState<string | null>(null);
@@ -367,6 +387,7 @@ export function AddExpenseSheet(props: {
       if (ocrItems.length > 0) {
         setMulti(true);
         setLines(ocrItems.map((i: any) => ({
+          id: ++lineSeq.current,
           item: i.name,
           qty: i.qty != null ? String(i.qty) : "",
           unit: "kg",
@@ -471,7 +492,7 @@ export function AddExpenseSheet(props: {
           </Field>
           <button
             onClick={() => { setMulti(!multi);
-              if (!multi && !lines.length) setLines([{ item: "", qty: "", unit: "kg", amount: "" }]);
+              if (!multi && !lines.length) setLines([newLine()]);
               if (!multi) setAmount(""); }}
             className={`mt-6 shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold ${
               multi ? "border-accent bg-accent-soft text-accent"
@@ -484,36 +505,59 @@ export function AddExpenseSheet(props: {
           <div className="rounded-md border border-rule p-2.5">
             <div className="mb-1.5 flex items-center justify-between">
               <span className="label-caps">Item lines</span>
-              <button onClick={() => setLines((x) => [...x,
-                      { item: "", qty: "", unit: "kg", amount: "" }])}
-                      className="text-xs font-semibold text-accent hover:underline">
-                ＋ add line
-              </button>
+              <span className="text-xs text-ink-faint">
+                {lines.length} {lines.length === 1 ? "line" : "lines"}
+              </span>
             </div>
             <div className="space-y-1.5">
               {lines.map((l, i) => (
-                <div key={i} className="grid grid-cols-[1fr_58px_54px_78px_22px] items-center gap-1.5">
+                // On a phone the item name gets its own full-width row and the
+                // figures sit beneath it; five fields abreast on a 360px screen
+                // put a 22px delete button a thumb's width from the amount.
+                <div key={l.id}
+                     className="grid grid-cols-[56px_52px_1fr_44px] items-center gap-1.5
+                                sm:grid-cols-[1fr_62px_58px_88px_44px]">
                   <Input placeholder="Item" value={l.item}
+                         aria-label={`Item ${i + 1}`}
+                         autoFocus={l.id === focusLine}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, item: e.target.value } : y))}
-                         className="!py-1.5 text-sm" />
+                         className="col-span-4 !py-1.5 text-sm sm:col-span-1" />
                   <Input inputMode="decimal" placeholder="qty" value={l.qty}
+                         aria-label={`Quantity for item ${i + 1}`}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, qty: e.target.value } : y))}
                          className="!py-1.5 text-right num text-sm" />
                   <Input placeholder="kg" value={l.unit}
+                         aria-label={`Unit for item ${i + 1}`}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, unit: e.target.value } : y))}
                          className="!py-1.5 text-sm" />
                   <Input inputMode="decimal" placeholder="₹" value={l.amount}
+                         aria-label={`Amount for item ${i + 1}`}
+                         // Enter at the end of a row starts the next one, so a
+                         // 20-item bill is typed without ever leaving the keys.
+                         onKeyDown={(e) => {
+                           if (e.key === "Enter") { e.preventDefault(); addLine(); }
+                         }}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, amount: e.target.value } : y))}
                          className="!py-1.5 text-right num text-sm" />
                   <button onClick={() => setLines((x) => x.filter((_, j) => j !== i))}
-                          className="p-1 text-ink-faint hover:text-bad"><X size={13} /></button>
+                          aria-label={`Remove line ${i + 1}`}
+                          className="flex h-11 w-11 items-center justify-center rounded-md
+                                     text-ink-faint hover:bg-paper-3 hover:text-bad
+                                     sm:h-9 sm:w-9"><X size={15} /></button>
                 </div>
               ))}
             </div>
+            {/* Below the rows, not above them: the next line is added where the
+                last one ends, so nobody scrolls up to add and back down to type. */}
+            <button onClick={addLine}
+                    className="mt-1.5 w-full rounded-md border border-dashed border-rule-strong
+                               py-2 text-xs font-semibold text-accent hover:bg-paper-3">
+              ＋ add line
+            </button>
             <div className="mt-2 flex items-center gap-2 border-t border-rule pt-2">
               <span className="text-xs text-ink-faint">Printed bill total (optional — difference booked as other charges)</span>
               <Input inputMode="decimal" placeholder="₹ bill total" value={billTotal}
