@@ -22,21 +22,43 @@ modified copy as a service for other people, you must publish your changes.
 These screenshots use Ledger's built-in fictional demo data. They contain no
 real restaurant, employee, supplier, or customer records.
 
+Each preview opens its original capture. Start with the day, act on the
+evidence, then inspect the wider business picture.
+
+### Run the day from one checklist
+
 <p align="center">
-  <img src="docs/screenshots/01-home.png" alt="Ledger daily operating checklist" width="49%">
-  <img src="docs/screenshots/07-daily-brief.png" alt="Ledger owner intelligence brief" width="49%">
-</p>
-<p align="center">
-  <img src="docs/screenshots/04-inventory.png" alt="Ledger evidence-backed inventory risks" width="49%">
-  <img src="docs/screenshots/06-purchase-orders.png" alt="Ledger purchase orders and controlled receiving" width="49%">
-</p>
-<p align="center">
-  <img src="docs/screenshots/09-deep-analysis.png" alt="Ledger deep restaurant analysis" width="49%">
-  <img src="docs/screenshots/12-mobile-home.png" alt="Ledger daily checklist on a phone" width="24%">
+  <a href="docs/screenshots/01-home.png">
+    <img src="docs/screenshots/01-home.png" alt="Ledger daily operating checklist" width="1080">
+  </a>
 </p>
 
-See the [full screenshot tour](docs/SCREENSHOTS.md) for expenses, cash close,
-reordering, reports, staffing, and owner controls.
+### See what needs an owner's attention
+
+<p align="center">
+  <a href="docs/screenshots/07-daily-brief.png">
+    <img src="docs/screenshots/07-daily-brief-overview.png" alt="Ledger owner intelligence brief" width="1080">
+  </a>
+</p>
+
+### Understand the month before making a decision
+
+<p align="center">
+  <a href="docs/screenshots/09-deep-analysis.png">
+    <img src="docs/screenshots/09-deep-analysis-overview.png" alt="Ledger deep restaurant analysis" width="1080">
+  </a>
+</p>
+
+### Keep the same daily loop on a phone
+
+<p align="center">
+  <a href="docs/screenshots/12-mobile-home.png">
+    <img src="docs/screenshots/12-mobile-home.png" alt="Ledger daily checklist on a phone" width="390">
+  </a>
+</p>
+
+See the [full visual tour](docs/SCREENSHOTS.md) for expenses, cash close,
+inventory, purchasing, reports, staffing, and owner controls.
 
 ---
 
