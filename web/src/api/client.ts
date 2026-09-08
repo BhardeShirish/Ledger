@@ -1,6 +1,8 @@
 import { csrfToken } from "../lib/csrf";
 import { enqueue } from "../lib/outbox";
 
+export type QueuedResult = { queued: true };
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -14,7 +16,9 @@ const OFFLINE_OK = new Set([
   "/attendance/bulk", "/attendance/mark", "/sales/manual", "/expenses",
 ]);
 
-export async function request(path: string, opts: RequestInit = {}): Promise<any> {
+type RequestOptions = RequestInit & { outboxSummary?: string };
+
+export async function request(path: string, opts: RequestOptions = {}): Promise<any> {
   let res: Response;
   try {
     const headers = new Headers(opts.headers);
@@ -31,9 +35,14 @@ export async function request(path: string, opts: RequestInit = {}): Promise<any
   } catch (netErr) {
     // Network unreachable → queue daily-entry writes so nothing is lost.
     if ((opts.method === "POST" || opts.method === "PUT") &&
-        OFFLINE_OK.has(path) && opts.body) {
-      enqueue(`/api${path}`, opts.method, JSON.parse(String(opts.body)), path);
-      throw new ApiError("Saved offline — it will sync automatically when the connection returns.", 0);
+        OFFLINE_OK.has(path) && opts.body && !(opts.body instanceof FormData)) {
+      try {
+        enqueue(`/api${path}`, opts.method, JSON.parse(String(opts.body)), opts.outboxSummary);
+        return { queued: true } satisfies QueuedResult;
+      } catch {
+        // A malformed body must remain an error; queuing an unreadable entry
+        // would falsely report a saved financial record.
+      }
     }
     throw new ApiError(
       "Ledger server is not reachable. Close this tab and open the Ootaa Ledger desktop shortcut.",
@@ -58,10 +67,10 @@ export async function request(path: string, opts: RequestInit = {}): Promise<any
 
 export const api = {
   get: (path: string) => request(path),
-  post: (path: string, body?: unknown) =>
-    request(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
-  put: (path: string, body?: unknown) =>
-    request(path, { method: "PUT", body: JSON.stringify(body ?? {}) }),
+  post: (path: string, body?: unknown, outboxSummary?: string) =>
+    request(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}), outboxSummary }),
+  put: (path: string, body?: unknown, outboxSummary?: string) =>
+    request(path, { method: "PUT", body: JSON.stringify(body ?? {}), outboxSummary }),
   patch: (path: string, body?: unknown) =>
     request(path, { method: "PATCH", body: JSON.stringify(body ?? {}) }),
   del: (path: string) => request(path, { method: "DELETE" }),

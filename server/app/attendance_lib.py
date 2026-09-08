@@ -86,6 +86,13 @@ def absent_days(a: Attendance) -> int:
     return 2 if a.double_duty else 1
 
 
+def worked_minutes(a: Attendance) -> int | None:
+    """Actual clocked minutes, preserving overnight shifts and missing clocks."""
+    if a.status not in ("P", "H") or a.in_min is None or a.out_min is None:
+        return None
+    return a.out_min - a.in_min if a.out_min >= a.in_min else a.out_min + 1440 - a.in_min
+
+
 def month_credit_totals(rows: list[Attendance]) -> dict:
     presents = sum(1 for r in rows if r.status == "P")
     halves = sum(1 for r in rows if r.status == "H")

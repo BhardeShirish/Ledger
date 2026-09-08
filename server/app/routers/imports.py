@@ -7,6 +7,7 @@ from ..db import get_db
 from ..importer import commit as importer_commit
 from ..importer import parse as importer_parse
 from ..models import ImportBatch, SalesItem, User
+from ..periods import assert_dates_open
 from ..security import require_owner, require_stepup
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -88,6 +89,13 @@ def commit_batch(batch_id: int, user: User = Depends(require_stepup),
     parsed = json.loads(stash.read_text(encoding="utf-8"))
     batch = db.get(ImportBatch, batch_id)
     try:
+        imported_dates = {
+            row["business_date"] for row in (
+                parsed.get("items") if parsed.get("report_kind") == "item_wise"
+                else parsed.get("bills", [])
+            )
+        }
+        assert_dates_open(db, batch.outlet_id, imported_dates)
         if parsed.get("report_kind") == "item_wise":
             imported = _commit_itemwise(db, batch, parsed["items"])
         else:

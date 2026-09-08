@@ -96,7 +96,7 @@ def test_count_trueup_and_shrinkage(client, outlet_id):
     assert abs(it2["current_qty"] - 17) < 0.01
 
 
-def test_order_list_par(client, outlet_id):
+def test_order_list_withholds_par_order_without_consumption_evidence(client, outlet_id):
     client.post("/api/auth/stepup", json={"password": "change-me-please"})
     cats = client.get("/api/lists/categories").json()
     rc = next(c for c in cats if c["name"].lower().startswith("raw"))
@@ -108,9 +108,7 @@ def test_order_list_par(client, outlet_id):
                  json={"par_qty": 40, "min_qty": 10})
     order = client.get("/api/inventory/order", params={
         "outlet_id": outlet_id}).json()
-    row = next(x for x in order if x["item"] == "Par Item")
-    assert row["suggested_order"] == 35.0
-    assert row["last_vendor"] == "Par Vendor"
+    assert not any(row["item"] == "Par Item" for row in order)
 
 
 def test_learning_golden(client, outlet_id):

@@ -12,6 +12,8 @@ that mattered.
 """
 from app.db import SessionLocal
 from app.models import SalesDaily
+from datetime import date, timedelta
+
 from app.util import today_iso
 
 
@@ -98,3 +100,12 @@ def test_closing_the_day_still_records_the_variance_honestly(client, outlet_id):
         "taken_home_rupees": 0, "note": "part payments"})
     assert r.status_code == 200, r.text
     assert r.json()["variance_paise"] == 30_000
+
+
+def test_cash_close_rejects_malformed_and_future_dates(client, outlet_id):
+    for close_date in ("not-a-date", (date.today() + timedelta(days=1)).isoformat()):
+        r = client.post("/api/cash/close", json={
+            "outlet_id": outlet_id, "date": close_date,
+            "counted_rupees": 0, "taken_home_rupees": 0})
+        assert r.status_code == 422, r.text
+        assert "date" in r.json()["detail"].lower()

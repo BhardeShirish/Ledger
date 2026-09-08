@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..audit import audit, check_edit_window
 from ..db import get_db
+from ..periods import assert_month_open
 from ..models import DayLoss, User
 from ..security import current_user
 from ..util import paise
@@ -104,6 +105,7 @@ def create(body: LossIn, user: User = Depends(current_user),
            db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
     check_edit_window(body.business_date, user, db, no_future=True)
+    assert_month_open(db, body.outlet_id, body.business_date)
 
     spec = LOSS_KINDS.get(body.kind)
     if spec is None:
@@ -138,6 +140,7 @@ def delete(loss_id: int, user: User = Depends(current_user),
         raise HTTPException(404, "Loss not found")
     assert_outlet_access(db, user, row.outlet_id)
     check_edit_window(row.business_date, user, db)
+    assert_month_open(db, row.outlet_id, row.business_date)
     audit(db, None, user.id, "delete-loss", "day_loss", row.id,
           before={"kind": row.kind, "amount_rupees": row.amount_paise / 100,
                   "from_drawer": row.from_drawer, "date": row.business_date})

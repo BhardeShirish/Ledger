@@ -20,12 +20,13 @@ from datetime import date, timedelta
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from ..audit import get_setting_db
 from ..db import get_db
-from ..models import (Employee, Expense, ExpenseCategory, PayrollRun,
-                      Payslip, User)
+from ..models import (DayClosure, Employee, Expense, ExpenseCategory, PayrollRun,
+                      Payslip, SalesBill, SalesDaily, User)
 from ..security import current_user
 from ..util import days_in_month
 from .helpers import assert_outlet_access, user_outlet_ids
@@ -42,6 +43,7 @@ MIN_ROWS_TO_COMPARE = 3
 MATERIAL_PAISE = 50_000        # ₹500
 MATERIAL_PCT = 15.0
 PRICE_RISE_PCT = 10.0
+MAX_ADVICE_FINDINGS = 3
 
 
 def _rupees(paise: int | float) -> float:
@@ -153,6 +155,52 @@ def _payroll_paid(db: Session, outlets: list[int], y: int, m: int) -> int:
     return total
 
 
+def _recording_coverage(db: Session, outlets: list[int], lo: date, hi: date) -> dict:
+    """Aggregate book-completion facts; no rows or identifying data leave here."""
+    bounds = (lo.isoformat(), hi.isoformat())
+    sales_days = {
+        (outlet, value) for outlet, value in db.query(
+            SalesDaily.outlet_id, SalesDaily.business_date).filter(
+            SalesDaily.outlet_id.in_(outlets),
+            SalesDaily.business_date >= bounds[0],
+            SalesDaily.business_date <= bounds[1],
+            or_(
+                and_(SalesDaily.source == "petpooja", SalesDaily.total_paise > 0),
+                and_(SalesDaily.source != "petpooja", SalesDaily.amount_paise > 0),
+            )).distinct()
+    }
+    # Old imported books can have bills before the daily rollup was added.
+    sales_days.update(
+        (outlet, value) for outlet, value in db.query(
+            SalesBill.outlet_id, SalesBill.business_date).filter(
+            SalesBill.outlet_id.in_(outlets),
+            SalesBill.business_date >= bounds[0],
+            SalesBill.business_date <= bounds[1],
+            SalesBill.total_paise > 0).distinct())
+    expense_days = {
+        (outlet, value) for outlet, value in db.query(
+            Expense.outlet_id, Expense.business_date).filter(
+            Expense.outlet_id.in_(outlets),
+            Expense.business_date >= bounds[0],
+            Expense.business_date <= bounds[1]).distinct()
+    }
+    closed_days = {
+        (outlet, value) for outlet, value in db.query(
+            DayClosure.outlet_id, DayClosure.business_date).filter(
+            DayClosure.outlet_id.in_(outlets),
+            DayClosure.business_date >= bounds[0],
+            DayClosure.business_date <= bounds[1],
+            DayClosure.reopened_at.is_(None)).distinct()
+    }
+    closed_sales_days = sales_days & closed_days
+    return {
+        "sales_days": len(sales_days),
+        "expense_days": len(expense_days),
+        "cash_closed_among_sales_days": len(closed_sales_days),
+        "cash_open_among_sales_days": len(sales_days - closed_sales_days),
+    }
+
+
 def build_facts(db: Session, user: User, month: str | None,
                 outlet_id: int | None) -> dict:
     """Everything the review needs, in rupees, with no opinions attached."""
@@ -197,6 +245,7 @@ def build_facts(db: Session, user: User, month: str | None,
 
     cur_staff = _headcount(db, outlets, lo, hi)
     prev_staff = _headcount(db, outlets, plo, phi)
+    coverage = _recording_coverage(db, outlets, lo, hi_eff)
 
     categories = []
     for name in sorted(set(cur_cat) | set(prev_cat)):
@@ -288,6 +337,7 @@ def build_facts(db: Session, user: User, month: str | None,
             "enough_to_compare": enough,
             "notes": notes,
         },
+        "recording_coverage": coverage,
     }
 
 
@@ -315,6 +365,12 @@ def build_findings(f: dict) -> list[dict]:
     if not comparable:
         add("info", "Too early to compare months",
             f["data_quality"]["notes"][0])
+
+    coverage = f["recording_coverage"]
+    if coverage["cash_open_among_sales_days"]:
+        add("act", "Cash closure missing on sales days",
+            f"{coverage['cash_open_among_sales_days']} of "
+            f"{coverage['sales_days']} sales days still need a drawer count.")
 
     # ── where the money went, this month, no comparison needed ──────────
     spenders = [c for c in f["categories"] if c["rupees"] > 0]
@@ -464,18 +520,15 @@ def review(month: str | None = None, outlet_id: int | None = None,
 # ── the optional AI paragraph ───────────────────────────────────────────────
 
 ADVICE_PROMPT = (
-    "You advise the owner of a small Indian restaurant. Below is a JSON "
-    "summary of their month: totals, per-category spend against last month, "
-    "fixed vs variable split, staff changes and ingredient unit prices. All "
-    "amounts are already in rupees.\n\n"
-    "Write plain, direct advice for a busy owner. Rules:\n"
-    "- Use ONLY the numbers given. Never invent a figure or a trend.\n"
-    "- If data_quality.enough_to_compare is false, say clearly that there "
-    "isn't enough logged data yet and keep it to one short paragraph.\n"
-    "- Lead with the single most important thing.\n"
-    "- Explain WHY a cost moved when the data shows it, and name what to do.\n"
-    "- Be specific: name the category and the rupee amount.\n"
-    "- No preamble, no headings, no markdown. At most 200 words.\n"
+    "You help a restaurant owner prioritize deterministic findings already "
+    "calculated on their device. Return ONLY JSON in exactly this shape: "
+    '{"finding_indexes":[0],"commentary":"short number-free guidance"}.\n'
+    "Rules: choose up to three valid indexes from the supplied finding list; "
+    "each finding includes a non-identifying topic so your guidance can name "
+    "the operational focus without guessing; "
+    "do not calculate or repeat any number, amount, date, name, or fact; "
+    "commentary must contain no digits, markdown, or headings; at most sixty "
+    "words. The app displays figures only from its local findings.\n"
 )
 
 
@@ -496,12 +549,32 @@ def _slim(facts: dict) -> dict:
         "month": facts["month"], "prev_month": facts["prev_month"],
         "totals": facts["totals"], "fixed_variable": facts["fixed_variable"],
         "staff": s,
-        "categories": [c for c in facts["categories"]
-                       if c["rupees"] or c["prev_rupees"]][:20],
-        "items": [{k: v for k, v in i.items() if k != "qty"}
-                  for i in facts["items"][:10]],
-        "data_quality": facts["data_quality"],
+        "data_quality": {
+            "expenses_this_month": facts["data_quality"]["expenses_this_month"],
+            "expenses_prev_month": facts["data_quality"]["expenses_prev_month"],
+            "enough_to_compare": facts["data_quality"]["enough_to_compare"],
+        },
+        "recording_coverage": facts["recording_coverage"],
+        "finding_severities": [
+            {"index": i, "severity": finding["severity"],
+             "topic": _finding_topic(finding)}
+            for i, finding in enumerate(build_findings(facts))
+        ],
     }
+
+
+def _finding_topic(finding: dict) -> str:
+    """Safe context for a useful AI summary, without sending book details."""
+    title = finding["title"].lower()
+    if "cash closure" in title:
+        return "cash_control"
+    if "cost" in title or "spend" in title or "supplier" in title:
+        return "cost_control"
+    if "staff" in title or "salary" in title:
+        return "staffing"
+    if "record" in title or "compare" in title:
+        return "bookkeeping"
+    return "business_review"
 
 
 @router.post("/advice")
@@ -519,6 +592,7 @@ def advice(body: AdviceIn, user: User = Depends(current_user),
 
     facts = build_facts(db, user, body.month, body.outlet_id)
     payload = _slim(facts)
+    findings = build_findings(facts)
 
     req = {
         "model": c["model"],
@@ -535,13 +609,26 @@ def advice(body: AdviceIn, user: User = Depends(current_user),
     if r.status_code != 200:
         raise HTTPException(502, f"AI API said {r.status_code}: {r.text[:200]}")
     try:
-        text = r.json()["choices"][0]["message"]["content"]
+        raw = r.json()["choices"][0]["message"]["content"]
     except (KeyError, IndexError, ValueError):
         raise HTTPException(502, "AI reply didn't look like a chat completion.")
-    if not isinstance(text, str):
-        text = json.dumps(text)
-    text = text.strip()
-    if not text:
-        raise HTTPException(502, "The model sent back an empty answer — try again.")
-    return {"text": text, "model": c["model"],
-            "findings": build_findings(facts), "facts": facts}
+    if not isinstance(raw, str):
+        raise HTTPException(502, "AI reply must be structured JSON.")
+    try:
+        parsed = json.loads(raw)
+        indexes = parsed["finding_indexes"]
+        commentary = parsed["commentary"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise HTTPException(502, "AI reply must contain finding_indexes and commentary JSON.")
+    if (not isinstance(indexes, list) or not isinstance(commentary, str)
+            or not commentary.strip() or any(char.isdigit() for char in commentary)):
+        raise HTTPException(502, "AI reply had invalid selections or non-number-free commentary.")
+    selected = []
+    for index in indexes:
+        if type(index) is not int or not 0 <= index < len(findings):
+            raise HTTPException(502, "AI reply selected an invalid finding index.")
+        if index not in selected and len(selected) < MAX_ADVICE_FINDINGS:
+            selected.append(index)
+    return {"text": commentary.strip(), "model": c["model"],
+            "selected_finding_indexes": selected,
+            "findings": findings, "facts": facts}

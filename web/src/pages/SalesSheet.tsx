@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useOutletContext } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
 import { fmtDate, inr, todayISO } from "../lib/format";
 import { useDateParam } from "../lib/useDateParam";
+import { useDraftGuard } from "../components/Layout";
 import { Badge, Button, Card, ErrorNote, Input, SaveBar, SectionLabel, Spinner } from "../components/ui";
 
 type Ctx = { outletId: number };
@@ -28,10 +29,12 @@ export default function SalesSheet() {
   const guarded = useGuarded();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
   // beforeunload fires outside the render cycle, so it reads the latest
   // dirty set through a ref rather than a stale closure.
   const dirtyRef = useRef<string[]>([]);
   const inFlight = useRef<Set<string>>(new Set());
+  const { registerDirtyDraft, requestDiscard } = useDraftGuard();
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -47,55 +50,81 @@ export default function SalesSheet() {
   });
 
   const save = useMutation({
-    mutationFn: async (kind: string) => {
+    mutationFn: async ({ kind, amount }: { kind: string; amount: number }) => {
       // Clicking Save blurs the field, so the blur handler and the click can
       // both fire for the same row. Two concurrent writes to one cell race,
       // so let the first one finish and treat the second as a no-op.
       if (inFlight.current.has(kind)) return;
       inFlight.current.add(kind);
       try {
-        await guarded(() => api.put("/sales/manual", {
+        return guarded(() => api.put("/sales/manual", {
           outlet_id: outletId, business_date: date,
           channel_kind: kind,
-          amount_rupees: Number(drafts[kind] ?? "") || 0,
-        }));
+          amount_rupees: amount,
+        }, `Sale · ${CHANNEL_LABEL[kind] ?? kind} · ₹${amount} · ${date}`));
       } finally {
         inFlight.current.delete(kind);
       }
     },
-    onSuccess: async (_data, kind) => {
+    onSuccess: async (data, { kind }) => {
       setErr("");
+      setNotice(data?.queued ? "Saved on this device — it will sync automatically when you reconnect." : "");
       // Wait for the refetch before dropping the draft, otherwise the input
       // briefly falls back to the stale server value and looks like a revert.
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["sales-sheet"] }),
-        qc.invalidateQueries({ queryKey: ["home"] }),
-      ]);
-      setDrafts((d) => {
-        const next = { ...d };
-        delete next[kind];
-        return next;
-      });
+      try {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ["sales-sheet"] }),
+          qc.invalidateQueries({ queryKey: ["home"] }),
+        ]);
+      } finally {
+        // A queued write is already confirmed locally. An offline refetch
+        // must not leave its draft behind to invite a duplicate submission.
+        setDrafts((d) => {
+          const next = { ...d };
+          delete next[kind];
+          return next;
+        });
+      }
     },
     onError: (e: any) => setErr(e.message),
   });
 
-  if (q.isLoading) return <Spinner />;
   const rows: Row[] = q.data?.rows ?? [];
-  const total = q.data?.total_rupees ?? 0;
-  const lossTotal = q.data?.losses_rupees ?? 0;
-
-  // What the server currently holds, as the input would render it.
   const savedText = (r: Row) =>
     r.manual_amount_rupees != null ? String(r.manual_amount_rupees) : "";
-  // A row is dirty only if the typed text actually differs from what is saved,
-  // so typing a value back to its original clears the Save bar again.
   const dirtyKinds = rows
     .filter((r) => !r.imported
       && drafts[r.channel_kind] !== undefined
       && drafts[r.channel_kind] !== savedText(r))
     .map((r) => r.channel_kind);
+  const hasDirty = dirtyKinds.length > 0;
   dirtyRef.current = dirtyKinds;
+  useLayoutEffect(() => {
+    registerDirtyDraft(hasDirty
+      ? { label: "sales changes", discard: () => setDrafts({}) }
+      : null);
+    return () => registerDirtyDraft(null);
+  }, [hasDirty, registerDirtyDraft]);
+
+  if (q.isLoading) return <Spinner />;
+  const total = q.data?.total_rupees ?? 0;
+  const lossTotal = q.data?.losses_rupees ?? 0;
+
+  // A row is dirty only if the typed text actually differs from what is saved,
+  // so typing a value back to its original clears the Save bar again.
+  const validationError = (kind: string) => {
+    const value = drafts[kind] ?? "";
+    if (!value.trim()) return savedText(rows.find((r) => r.channel_kind === kind)!)
+      ? "Use Clear entry to remove a saved amount." : "Enter an amount.";
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount >= 0 ? "" : "Enter a valid amount of ₹0 or more.";
+  };
+  const saveKind = (kind: string) => {
+    const message = validationError(kind);
+    if (message) { setErr(message); return; }
+    setErr("");
+    save.mutate({ kind, amount: Number(drafts[kind]) });
+  };
 
   return (
     <div className="space-y-4">
@@ -105,8 +134,12 @@ export default function SalesSheet() {
           <h1 className="text-2xl font-semibold tracking-tight">{fmtDate(date)}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="date" value={date}
-                 onChange={(e) => { setDate(e.target.value); setDrafts({}); }}
+          <input type="date" value={date} max={todayISO()}
+                 onChange={(e) => {
+                   const next = e.target.value;
+                   if (next === date) return;
+                   requestDiscard(() => { setDrafts({}); setDate(next); });
+                 }}
                  className="rounded-md border border-rule-strong bg-paper px-3 py-1.5 num text-sm" />
           <ExportButton entity="sales_sheet"
                         params={{ outlet_id: outletId,
@@ -117,6 +150,7 @@ export default function SalesSheet() {
         </div>
       </header>
       <ErrorNote msg={err} />
+      {notice && <p role="status" className="text-sm text-good">{notice}</p>}
 
       <Card className="divide-y divide-rule">
         {rows.map((r) => (
@@ -141,11 +175,18 @@ export default function SalesSheet() {
                   inputMode="decimal" placeholder="₹"
                   value={drafts[r.channel_kind] ?? (r.manual_amount_rupees != null ? String(r.manual_amount_rupees) : "")}
                   onChange={(e) => setDrafts((d) => ({ ...d, [r.channel_kind]: e.target.value }))}
-                  onBlur={() => dirtyKinds.includes(r.channel_kind) && save.mutate(r.channel_kind)}
-                  onKeyDown={(e) => e.key === "Enter"
-                    && dirtyKinds.includes(r.channel_kind)
-                    && save.mutate(r.channel_kind)}
+                  aria-invalid={Boolean(drafts[r.channel_kind] !== undefined && validationError(r.channel_kind))}
+                  onKeyDown={(e) => e.key === "Enter" && saveKind(r.channel_kind)}
                   className="text-right" />
+                {drafts[r.channel_kind] !== undefined && validationError(r.channel_kind) && (
+                  <p className="mt-1 text-xs text-bad">{validationError(r.channel_kind)}</p>
+                )}
+                {r.manual_amount_rupees != null && r.manual_amount_rupees !== 0 && (
+                  <button type="button" className="mt-1 text-xs text-ink-faint underline hover:text-bad"
+                          onClick={() => save.mutate({ kind: r.channel_kind, amount: 0 })}>
+                    Clear entry
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -193,7 +234,7 @@ export default function SalesSheet() {
           <span className="text-sm text-ink-soft">
             {dirtyKinds.length} change{dirtyKinds.length > 1 ? "s" : ""} to save
           </span>
-          <Button onClick={() => dirtyKinds.forEach((k) => save.mutate(k))}
+          <Button onClick={() => dirtyKinds.forEach(saveKind)}
                   disabled={save.isPending}>
             {save.isPending ? "Saving…" : "Save changes"}
           </Button>

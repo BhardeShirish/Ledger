@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Camera, ScanText, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api/client";
 import { moneyCfg } from "../lib/format";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
 import { useGuarded } from "../lib/auth";
+import { useDraftGuard } from "../components/Layout";
 import { fmtDateShort, inr, monthLabelShort, todayISO } from "../lib/format";
 import {
   Badge, Button, Card, EmptyState, ErrorNote, Field, Input, SectionLabel,
-  Select, Sheet, Spinner,
+  Select, Sheet,
 } from "../components/ui";
 import { EmptyMonthHint } from "../components/EmptyMonthHint";
 
@@ -22,6 +23,7 @@ export default function ExpensesList() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [monthOffset, setMonthOffset] = useState(0);
+  const [notice, setNotice] = useState("");
 
   const period = useMemo(() => {
     const d = new Date();
@@ -45,11 +47,19 @@ export default function ExpensesList() {
                      + `&end=${period}-${String(last).padStart(2, "0")}`);
     },
   });
+  const [year, month] = period.split("-").map(Number);
+  const monthEnd = `${period}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+  const expenseSummary = (body: any) => {
+    const category = cats.data?.find((c: any) => c.id === body.category_id)?.name
+      ?? `category #${body.category_id}`;
+    return `Expense · ${category} · ₹${body.amount_rupees} · ${body.mode} · ${body.business_date}`;
+  };
 
   const create = useMutation({
-    mutationFn: (body: any) => guarded(() => api.post("/expenses", body)),
-    onSuccess: () => {
+    mutationFn: (body: any) => guarded(() => api.post("/expenses", body, expenseSummary(body))),
+    onSuccess: (data) => {
       setOpen(false);
+      setNotice(data?.queued ? "Expense saved on this device and queued to sync." : "");
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
@@ -67,6 +77,7 @@ export default function ExpensesList() {
     },
   });
 
+  const closeAddExpense = useCallback(() => setOpen(false), []);
   const totalPaise = (list.data?.rows ?? []).reduce((s: number, r: any) => s + r.amount_paise, 0);
 
   return (
@@ -95,7 +106,7 @@ export default function ExpensesList() {
         <Button onClick={() => setOpen(true)} size="lg" className="flex-1 md:flex-none">
           <Plus size={16} /> Add expense
         </Button>
-        <ExportButton entity="expenses" params={{ outlet_id: outletId, start: `${period}-01`, end: `${period}-31` }} />
+        <ExportButton entity="expenses" params={{ outlet_id: outletId, start: `${period}-01`, end: monthEnd }} />
         <ImportButtons entity="expenses" outletId={outletId}
                        onDone={() => {
                          qc.invalidateQueries({ queryKey: ["expenses"] });
@@ -127,6 +138,7 @@ export default function ExpensesList() {
                       onEdit={() => setEditing(e)} />
         ))}
       </Card>
+      {notice && <p role="status" className="text-sm text-good">{notice}</p>}
 
       <EditExpenseSheet
         expense={editing}
@@ -141,7 +153,7 @@ export default function ExpensesList() {
       />
 
       <AddExpenseSheet
-        open={open} onClose={() => setOpen(false)}
+        open={open} onClose={closeAddExpense}
         outletId={outletId}
         cats={cats.data ?? []}
         vendors={vendors.data ?? []}
@@ -271,7 +283,7 @@ function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
                     business_date: date, amount_rupees: Number(amount),
                     category_id: catId, mode, description: desc,
                   })}>
-            {save.isPending ? <Spinner /> : "Save changes"}
+            {save.isPending ? "Saving…" : "Save changes"}
           </Button>
         </div>
 
@@ -296,7 +308,7 @@ function EditExpenseSheet({ expense, cats, onClose, onSaved }: {
                 <Button variant="danger" size="sm" className="flex-1"
                         disabled={remove.isPending}
                         onClick={() => remove.mutate()}>
-                  {remove.isPending ? <Spinner /> : "Yes, delete"}
+                  {remove.isPending ? "Deleting…" : "Yes, delete"}
                 </Button>
               </div>
             </div>
@@ -313,6 +325,7 @@ export function AddExpenseSheet(props: {
   onSubmit: (body: any) => void;
   onSubmitBulk?: (body: any) => void;
 }) {
+  const { onClose } = props;
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState("");
   const [catId, setCatId] = useState<number | null>(null);
@@ -328,6 +341,7 @@ export function AddExpenseSheet(props: {
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
   const [multi, setMulti] = useState(false);
+  const [trackingOpen, setTrackingOpen] = useState(false);
   // Rows carry a stable id. Keying by array index makes React reuse the wrong
   // DOM node when a middle row is deleted, which steals the cursor mid-typing.
   const lineSeq = useRef(0);
@@ -352,33 +366,51 @@ export function AddExpenseSheet(props: {
   const [ocrState, setOcrState] = useState<{ configured: boolean; reading: boolean;
                                              note: string }>(
     { configured: false, reading: false, note: "" });
+  const [formErr, setFormErr] = useState("");
+  const formGeneration = useRef(0);
+  const receiptPathRef = useRef<string | null>(null);
+  const uploadSequence = useRef(0);
+  const ocrSequence = useRef(0);
 
   useEffect(() => {
     if (props.open) {
+      formGeneration.current += 1;
+      ocrSequence.current += 1;
+      setDate(todayISO()); setAmount(""); setCatId(null); setMode("upi"); setDesc("");
+      setVendorQ(""); setVendorId(null); setReceiptPath(null); receiptPathRef.current = null;
+      setItemName(""); setQuantity(""); setUnit(""); setTrackingOpen(false);
+      setMulti(false); setLines([]); setBillTotal(""); setFocusLine(null);
+      setCatFilter(""); setNewCatOpen(false); setNewCatName(""); setNewCatErr("");
+      setFormErr(""); setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+      setOcrState((x) => ({ ...x, reading: false, note: "" }));
+      const generation = formGeneration.current;
       api.get("/ocr/status").then((s) =>
-        setOcrState((x) => ({ ...x, configured: !!s.configured }))).catch(() => {});
-    }
-  }, [props.open]);
-  useEffect(() => {
-    if (!props.open) {
-      setAmount(""); setCatId(null); setMode("upi"); setDesc("");
-      setVendorQ(""); setVendorId(null); setReceiptPath(null);
-      setItemName(""); setQuantity(""); setUnit("");
-      setMulti(false); setLines([]); setBillTotal("");
+        generation === formGeneration.current &&
+          setOcrState((x) => ({ ...x, configured: !!s.configured }))).catch(() => {});
+    } else {
+      formGeneration.current += 1;
+      uploadSequence.current += 1;
+      ocrSequence.current += 1;
     }
   }, [props.open]);
 
-  const readBill = async () => {
-    if (!receiptPath) return;
-    setOcrState((x) => ({ ...x, reading: true, note: "" }));
+  const readBill = async (path = receiptPathRef.current) => {
+    if (!path) return;
+    const generation = formGeneration.current;
+    const ocrId = ++ocrSequence.current;
+    const current = () => generation === formGeneration.current
+      && receiptPathRef.current === path && ocrSequence.current === ocrId;
+    setOcrState((x) => current() ? ({ ...x, reading: true, note: "" }) : x);
     try {
       // receiptPath is /api/files/<name>; fetch the bytes we already stored
-      const res = await fetch(receiptPath, { credentials: "include" });
+      const res = await fetch(path, { credentials: "include" });
       const blob = await res.blob();
-      const dot = receiptPath.lastIndexOf(".");
+      const dot = path.lastIndexOf(".");
       const fd = new FormData();
-      fd.append("file", blob, `bill${dot >= 0 ? receiptPath.slice(dot) : ".jpg"}`);
+      fd.append("file", blob, `bill${dot >= 0 ? path.slice(dot) : ".jpg"}`);
       const r = await api.post("/ocr/extract", fd);
+      if (!current()) return;
       setAmount(String(r.total_rupees ?? ""));
       if (r.vendor_name) setVendorQ(r.vendor_name);
       if (!r.date_is_today_default && r.bill_date) setDate(r.bill_date);
@@ -386,6 +418,7 @@ export function AddExpenseSheet(props: {
       const ocrItems = (r.items ?? []).filter((i: any) => i.name);
       if (ocrItems.length > 0) {
         setMulti(true);
+        setTrackingOpen(true);
         setLines(ocrItems.map((i: any) => ({
           id: ++lineSeq.current,
           item: i.name,
@@ -401,11 +434,36 @@ export function AddExpenseSheet(props: {
       setOcrState((x) => ({ ...x,
         note: `${r.confidence}-confidence read — check lines before saving` }));
     } catch (e: any) {
-      setOcrState((x) => ({ ...x, note: e.message || "couldn't read the bill" }));
+      if (current()) setOcrState((x) => ({ ...x, note: e.message || "couldn't read the bill" }));
     } finally {
-      setOcrState((x) => ({ ...x, reading: false }));
+      if (current()) setOcrState((x) => ({ ...x, reading: false }));
     }
   };
+
+  const { registerDirtyDraft, requestDiscard } = useDraftGuard();
+  const meaningful = Boolean(amount.trim() || catId || desc.trim() || vendorQ.trim()
+    || receiptPath || itemName.trim() || quantity.trim() || unit.trim() || billTotal.trim()
+    || lines.some((line) => line.item.trim() || line.qty.trim() || line.amount.trim()));
+  const resetAndClose = useCallback(() => {
+    formGeneration.current += 1;
+    ocrSequence.current += 1;
+    receiptPathRef.current = null;
+    onClose();
+  }, [onClose]);
+  useLayoutEffect(() => {
+    registerDirtyDraft(props.open && meaningful
+      ? { label: "new expense", discard: resetAndClose }
+      : null);
+    return () => registerDirtyDraft(null);
+  }, [meaningful, props.open, registerDirtyDraft, resetAndClose]);
+  const close = () => requestDiscard(resetAndClose);
+  useEffect(() => {
+    const handler = (event: BeforeUnloadEvent) => {
+      if (props.open && meaningful) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [meaningful, props.open]);
 
   if (!props.open) return null;
 
@@ -419,11 +477,12 @@ export function AddExpenseSheet(props: {
     .filter((l) => l.item.trim() && Number(l.amount) > 0);
 
   const submit = () => {
-    if (!catId) return;
+    if (!catId) { setFormErr("Choose a category before saving."); return; }
     if (multi) {
-      if (!cleanLines.length) return;
+      if (!cleanLines.length) { setFormErr("Add at least one item with an amount."); return; }
       const anyQty = cleanLines.some((l) => Number(l.qty) > 0);
-      if (anyQty && !vendorId) return;             // server enforces too
+      if (anyQty && !vendorId) { setFormErr("Choose or add a vendor to track item quantities."); return; }
+      setFormErr("");
       props.onSubmitBulk?.({
         outlet_id: props.outletId, business_date: date,
         category_id: catId, vendor_id: vendorId, mode,
@@ -437,8 +496,13 @@ export function AddExpenseSheet(props: {
       });
       return;
     }
-    if (!amount) return;
-    if (Number(quantity) > 0 && !vendorId) return;   // server enforces too
+    if (!amount || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      setFormErr("Enter an amount greater than ₹0."); return;
+    }
+    if (Number(quantity) > 0 && !vendorId) {
+      setFormErr("Choose or add a vendor to track item quantities."); return;
+    }
+    setFormErr("");
     props.onSubmit({
       outlet_id: props.outletId, business_date: date,
       category_id: catId, vendor_id: vendorId,
@@ -476,7 +540,7 @@ export function AddExpenseSheet(props: {
 
 
   return (
-    <Sheet open={props.open} onClose={props.onClose} title="Add expense">
+    <Sheet open={props.open} onClose={close} title="Add expense">
       <div className="space-y-3.5">
         <div className="flex items-center justify-between gap-2">
           <Field label="Amount">
@@ -493,7 +557,7 @@ export function AddExpenseSheet(props: {
           <button
             onClick={() => { setMulti(!multi);
               if (!multi && !lines.length) setLines([newLine()]);
-              if (!multi) setAmount(""); }}
+              if (!multi) { setAmount(""); setTrackingOpen(true); } }}
             className={`mt-6 shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold ${
               multi ? "border-accent bg-accent-soft text-accent"
                     : "border-rule-strong text-ink-soft hover:bg-paper-3"}`}>
@@ -598,7 +662,7 @@ export function AddExpenseSheet(props: {
                        }} />
                 <Button size="sm" disabled={!newCatName.trim() || savingCat}
                         onClick={() => void quickAddCat()}>
-                  {savingCat ? <Spinner /> : "Add"}
+                  {savingCat ? "Adding…" : "Add"}
                 </Button>
                 <Button size="sm" variant="ghost" aria-label="Cancel new category"
                         onClick={() => { setNewCatOpen(false); setNewCatErr(""); }}>
@@ -653,40 +717,54 @@ export function AddExpenseSheet(props: {
         </Field>
 
         {/* Unit economics — raw materials bought by weight/volume */}
-        <div className="rounded-md border border-rule bg-paper-2 px-3 py-2.5">
-          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
-            Bought by weight/quantity? (optional)
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Input placeholder="Item (Rice…)" value={itemName}
-                   onChange={(e) => setItemName(e.target.value)} />
-            <Input inputMode="decimal" placeholder="Qty" value={quantity}
-                   onChange={(e) => setQuantity(e.target.value)} className="text-right" />
-            <Input placeholder="kg / L / pcs" value={unit}
-                   onChange={(e) => setUnit(e.target.value)} />
-          </div>
-          {Number(quantity) > 0 && Number(amount) > 0 && (
-            <p className="num mt-1 text-xs text-good">
-              {moneyCfg.symbol}{(Number(amount) / Number(quantity)).toFixed(2)} per {unit || "unit"}
-              {!vendorId && <span className="text-bad"> · pick a vendor to track prices</span>}
-            </p>
+        {!multi && <div className="rounded-md border border-rule bg-paper-2 px-3 py-2.5">
+          <button type="button" onClick={() => setTrackingOpen(!trackingOpen)}
+                  aria-expanded={trackingOpen}
+                  className="flex w-full items-center justify-between text-left text-sm font-medium text-ink-soft">
+            <span>Bought by weight/quantity? (optional)</span>
+            <span className="text-xs text-accent">{trackingOpen ? "Hide" : "Add details"}</span>
+          </button>
+          {trackingOpen && (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <Input placeholder="Item (Rice…)" value={itemName}
+                       onChange={(e) => setItemName(e.target.value)} />
+                <Input inputMode="decimal" placeholder="Qty" value={quantity}
+                       onChange={(e) => setQuantity(e.target.value)} className="text-right" />
+                <Input placeholder="kg / L / pcs" value={unit}
+                       onChange={(e) => setUnit(e.target.value)} />
+              </div>
+              {Number(quantity) > 0 && Number(amount) > 0 && (
+                <p className="num mt-1 text-xs text-good">
+                  {moneyCfg.symbol}{(Number(amount) / Number(quantity)).toFixed(2)} per {unit || "unit"}
+                  {!vendorId && <span className="text-bad"> · pick a vendor to track prices</span>}
+                </p>
+              )}
+            </>
           )}
-        </div>
+        </div>}
 
         <div className="flex items-center gap-3">
           <input ref={fileRef} type="file" accept="image/*,.pdf" hidden
                  onChange={async (e) => {
                    const f = e.target.files?.[0];
                    if (!f) return;
+                   const generation = formGeneration.current;
+                   const uploadId = ++uploadSequence.current;
+                   ocrSequence.current += 1;
                    setUploading(true);
                    try {
                      const fd = new FormData();
                      fd.append("file", f);
                      const r = await api.post("/uploads", fd);
+                     if (formGeneration.current !== generation || uploadSequence.current !== uploadId) return;
+                     receiptPathRef.current = r.path;
                      setReceiptPath(r.path);
-                     void readBill();          // auto-read right after attach
+                     void readBill(r.path);    // use this upload, not stale state
                    } finally {
-                     setUploading(false);
+                     if (formGeneration.current === generation && uploadSequence.current === uploadId) {
+                       setUploading(false);
+                     }
                    }
                  }} />
           <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
@@ -707,7 +785,7 @@ export function AddExpenseSheet(props: {
           </p>
         )}
 
-        <ErrorNote msg={props.err} />
+        <ErrorNote msg={formErr || props.err} />
         <Button size="lg" className="w-full"
                 disabled={!catId || props.busy ||
                           (multi ? !cleanLines.length : !amount)}
@@ -720,5 +798,3 @@ export function AddExpenseSheet(props: {
     </Sheet>
   );
 }
-
-

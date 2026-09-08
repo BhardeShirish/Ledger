@@ -5,8 +5,8 @@ import {
   CloudOff, Home, IndianRupee, LayoutDashboard, Lock, LogOut, Menu, Package,
   Settings, type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Link, Outlet, useBlocker, useLocation, useNavigate } from "react-router-dom";
 import {
   flushOutbox, getOutbox, removeOutbox, subscribeOutbox,
 } from "../lib/outbox";
@@ -17,6 +17,15 @@ import { useMoney } from "../lib/money";
 import { Button, Sheet, Spinner } from "./ui";
 
 type OutletRow = { id: number; name: string };
+type DirtyDraft = { label: string; discard: () => void };
+
+const DraftGuardContext = createContext<{
+  registerDirtyDraft: (draft: DirtyDraft | null) => void;
+  requestDiscard: (action: () => void) => void;
+}>({ registerDirtyDraft: () => {}, requestDiscard: (action) => action() });
+
+/** Lets the current outlet page protect one meaningful, unsaved draft. */
+export const useDraftGuard = () => useContext(DraftGuardContext);
 
 const OUTLETS_CACHE = "ledger_outlets";
 
@@ -72,6 +81,7 @@ export const GROUPS = [
     base: "/money/vendors",
     children: [
       { to: "/money/vendors", label: "Suppliers" },
+      { to: "/money/purchase-orders", label: "Purchase orders" },
       { to: "/money/unitprices", label: "What you pay per kg" },
       { to: "/money/bank", label: "Bank statement", owner: true },
     ],
@@ -151,7 +161,7 @@ export function ownerOf(pathname: string) {
 }
 
 export default function Layout() {
-  const { me, offline: authOffline } = useAuth();
+  const { me, offline: authOffline, setMe } = useAuth();
   const [navOnline, setNavOnline] = useState(() => navigator.onLine);
   useEffect(() => {
     const up = () => setNavOnline(true);
@@ -173,9 +183,28 @@ export default function Layout() {
   const [outboxOpen, setOutboxOpen] = useState(false);
   const [apiError, setApiError] = useState("");
   const [errorSticky, setErrorSticky] = useState(false);
+  const [dirtyDraft, setDirtyDraft] = useState<DirtyDraft | null>(null);
+  const dirtyDraftRef = useRef<DirtyDraft | null>(null);
+  const [pendingDiscard, setPendingDiscard] = useState<(() => void) | null>(null);
+  const bypassBlockerRef = useRef(false);
+  const [syncStatus, setSyncStatus] = useState("");
   const queryClient = useQueryClient();
   const nav = useNavigate();
   const loc = useLocation();
+  const blocker = useBlocker(
+    useCallback(
+      () => Boolean(dirtyDraft) && !bypassBlockerRef.current,
+      [dirtyDraft],
+    ),
+  );
+  const registerDirtyDraft = useCallback((draft: DirtyDraft | null) => {
+    dirtyDraftRef.current = draft;
+    setDirtyDraft(draft);
+  }, []);
+  const requestDiscard = useCallback((action: () => void) => {
+    if (dirtyDraftRef.current) setPendingDiscard(() => action);
+    else action();
+  }, []);
 
   // MoneyProvider sits above AuthProvider, so its first fetch happens on the
   // login screen and 401s. Layout only mounts once signed in, so refresh here
@@ -190,6 +219,7 @@ export default function Layout() {
   useEffect(() => {
     if (activeGroup) setOpenGroup(activeGroup.key);
   }, [activeGroup?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setMobileMenuOpen(false); }, [loc.pathname]);
 
   // offline outbox: flush when we come back online / every minute
   const [outbox, setOutbox] = useState(getOutbox());
@@ -232,16 +262,19 @@ export default function Layout() {
   }, []);
 
   const pick = (id: number) => {
-    setOutletId(id);
-    localStorage.setItem("ledger_outlet", String(id));
-    window.dispatchEvent(new CustomEvent("outlet-changed", { detail: id }));
-    setSwitcherOpen(false);
-    nav("/");                       // switching outlet lands on Home
+    requestDiscard(() => {
+      setOutletId(id);
+      localStorage.setItem("ledger_outlet", String(id));
+      window.dispatchEvent(new CustomEvent("outlet-changed", { detail: id }));
+      setSwitcherOpen(false);
+      nav("/");                     // switching outlet lands on Home
+    });
   };
   if (me === null) return null;
   const current = outlets.find((o) => o.id === outletId);
 
   return (
+    <DraftGuardContext.Provider value={{ registerDirtyDraft, requestDiscard }}>
     <div className="min-h-screen md:flex">
       {/* Desktop rail */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-rule bg-paper px-3 py-4 md:flex">
@@ -273,8 +306,7 @@ export default function Layout() {
           )}
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto">
-          <RailLink to="/" label="Home" icon={Home}
-                    active={loc.pathname === "/"} />
+          <RailLink to="/" label="Home" icon={Home} active={loc.pathname === "/"} />
           {GROUPS.filter((g) => g.children.some((c: any) => !c.owner || me.role === "owner"))
                  .map((g) => {
             const visible = g.children.filter((c: any) => !c.owner || me.role === "owner");
@@ -284,8 +316,9 @@ export default function Layout() {
               <div key={g.key}>
                 <button
                   onClick={() => {
-                    setOpenGroup(isOpen ? null : g.key);
-                    nav(g.base);
+                    if (loc.pathname === g.base) {
+                      setOpenGroup(isOpen ? null : g.key);
+                    } else nav(g.base);
                   }}
                   className={clsx(
                     "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm",
@@ -325,7 +358,20 @@ export default function Layout() {
               ))}
           </div>
         </nav>
-        <OwnerBox />
+        <OwnerBox onNavigate={nav}
+                  onSignOut={() => requestDiscard(() => {
+                    void (async () => {
+                      try {
+                        await api.post("/auth/logout");
+                      } catch {
+                        /* offline: clearing the local session below is what matters */
+                      }
+                      clearCachedMe();
+                      localStorage.removeItem(OUTLETS_CACHE);
+                      setMe(null);
+                      nav("/login", { replace: true });
+                    })();
+                  })} />
       </aside>
 
       {/* Main column */}
@@ -443,7 +489,7 @@ export default function Layout() {
                 {g.children
                   .filter((c: any) => !c.owner || me.role === "owner")
                   .map((c: any) => (
-                    <Link key={c.to} to={c.to} onClick={() => setMobileMenuOpen(false)}
+                    <Link key={c.to} to={c.to}
                           className="rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
                       {c.label}
                     </Link>
@@ -457,7 +503,7 @@ export default function Layout() {
               {SECTIONS
                 .filter((s) => !s.owner || me.role === "owner")
                 .map(({ to, label, icon: Icon }) => (
-                  <Link key={to} to={to} onClick={() => setMobileMenuOpen(false)}
+                  <Link key={to} to={to}
                         className="flex items-center gap-2 rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
                     <Icon size={16} strokeWidth={1.75} className="shrink-0 text-ink-faint" />
                     {label}
@@ -472,23 +518,59 @@ export default function Layout() {
         <div className="space-y-2">
           {outbox.map((item) => (
             <div key={item.id} className="rounded-md border border-rule p-3 text-sm">
-              <div className="font-medium">{item.label}</div>
+              <div className="font-medium">{item.summary}</div>
               <div className="text-xs text-ink-faint">
-                {item.method} · outlet {item.outletId ?? "not specified"}
+                Queued {new Date(item.ts).toLocaleString("en-IN")} · outlet {item.outletId ?? "not specified"}
               </div>
               {item.error && <div className="mt-1 text-xs text-bad">{item.error}</div>}
-              <Button variant="ghost" size="sm" className="mt-2"
-                      onClick={() => removeOutbox(item.id)}>
-                Discard
-              </Button>
+              <OutboxDiscard item={item} onDiscard={() => removeOutbox(item.id)} />
             </div>
           ))}
-          <Button className="w-full" onClick={() => void flushOutbox()}>
-            Retry now
+          {syncStatus && <p role="status" className="text-xs text-ink-soft">{syncStatus}</p>}
+          <Button className="w-full" disabled={isOffline}
+                  onClick={async () => {
+                    const count = await flushOutbox();
+                    setSyncStatus(count
+                      ? `Synced ${count} queued entr${count === 1 ? "y" : "ies"}.`
+                      : "Nothing synced yet. Check the error shown on each entry.");
+                  }}>
+            {isOffline ? "Reconnect to retry" : "Retry now"}
           </Button>
         </div>
       </Sheet>
     </div>
+    {(pendingDiscard || blocker.state === "blocked") && (
+      <Sheet open onClose={() => {
+        if (blocker.state === "blocked") blocker.reset();
+        setPendingDiscard(null);
+      }} title="Keep unsaved work?">
+        <div className="space-y-4">
+          <p className="text-sm text-ink-soft">
+            Your {dirtyDraft?.label ?? "draft"} has unsaved changes. Keep working, or discard it and continue.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => {
+              if (blocker.state === "blocked") blocker.reset();
+              setPendingDiscard(null);
+            }}>Keep working</Button>
+            <Button variant="danger" onClick={() => {
+              dirtyDraft?.discard();
+              const action = pendingDiscard;
+              dirtyDraftRef.current = null;
+              setDirtyDraft(null);
+              setPendingDiscard(null);
+              if (blocker.state === "blocked") blocker.proceed();
+              else if (action) {
+                bypassBlockerRef.current = true;
+                action();
+                queueMicrotask(() => { bypassBlockerRef.current = false; });
+              }
+            }}>Discard &amp; continue</Button>
+          </div>
+        </div>
+      </Sheet>
+    )}
+    </DraftGuardContext.Provider>
   );
 }
 
@@ -504,9 +586,27 @@ function RailLink({ to, label, icon: Icon, active }: any) {
   );
 }
 
-function OwnerBox() {
-  const { me, setMe } = useAuth();
-  const nav = useNavigate();
+function OutboxDiscard({ item, onDiscard }: { item: { id: string; summary: string }; onDiscard: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  return confirming ? (
+    <div className="mt-2 space-y-2 border-t border-rule pt-2">
+      <p className="text-xs text-ink-soft">Discard “{item.summary}”? It will not sync later.</p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>Keep entry</Button>
+        <Button variant="danger" size="sm" onClick={onDiscard}>Discard entry</Button>
+      </div>
+    </div>
+  ) : (
+    <Button variant="ghost" size="sm" className="mt-2" onClick={() => setConfirming(true)}>
+      Discard
+    </Button>
+  );
+}
+
+function OwnerBox({ onNavigate, onSignOut }: {
+  onNavigate: (to: string) => void; onSignOut: () => void;
+}) {
+  const { me } = useAuth();
   if (!me) return null;
   return (
     <div className="border-t border-rule pt-3">
@@ -514,7 +614,7 @@ function OwnerBox() {
         Signed in as <span className="font-semibold text-ink">{me.username}</span> ({me.role})
       </div>
       {me.role === "owner" ? (
-        <button onClick={() => nav("/settings")}
+        <button onClick={() => onNavigate("/settings")}
           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-paper-3">
           <Settings size={15} /> Settings
         </button>
@@ -524,20 +624,7 @@ function OwnerBox() {
         </div>
       )}
       <button
-        onClick={async () => {
-          // Sign out locally even if the server is unreachable, otherwise the
-          // button does nothing on a phone with no signal and the cached
-          // identity stays behind.
-          try {
-            await api.post("/auth/logout");
-          } catch {
-            /* offline: clearing the local session below is what matters */
-          }
-          clearCachedMe();
-          localStorage.removeItem(OUTLETS_CACHE);
-          setMe(null);
-          nav("/login", { replace: true });
-        }}
+        onClick={onSignOut}
         className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-paper-3">
         <LogOut size={15} /> Sign out
       </button>

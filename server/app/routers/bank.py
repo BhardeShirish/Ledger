@@ -13,17 +13,20 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import bankstmt
 from ..audit import audit, check_edit_window
 from ..config import DATA_DIR
 from ..db import get_db
-from ..models import (BankRule, Expense, ExpenseCategory, ImportBatch, User,
-                      Vendor)
+from ..models import (BankCredit, BankRule, CashBankMatch, DayClosure, Expense,
+                      ExpenseCategory, ImportBatch, User, Vendor)
+from ..periods import assert_dates_open
 from ..security import current_user, require_owner, require_stepup
 from .helpers import assert_outlet_access
 
@@ -57,6 +60,7 @@ def _line_hash(outlet_id: int, txn: dict, occurrence: int = 1) -> str:
         "bank", str(outlet_id), txn["date"], str(txn["amount_paise"]),
         (txn.get("ref") or "").strip().upper(),
         " ".join((txn.get("narration") or "").split()).upper(),
+        txn.get("direction") or "",
     ])
     if occurrence > 1:
         raw = f"{raw}|#{occurrence}"
@@ -83,6 +87,10 @@ async def upload(file: UploadFile, outlet_id: int,
         .filter(Expense.outlet_id == outlet_id,
                 Expense.idempotency_key.isnot(None))
     }
+    credit_seen = {
+        key for (key,) in db.query(BankCredit.line_hash)
+        .filter(BankCredit.outlet_id == outlet_id)
+    }
 
     txns: list[dict] = []
     occurrences: Counter[str] = Counter()
@@ -100,6 +108,19 @@ async def upload(file: UploadFile, outlet_id: int,
         row["hash"] = _line_hash(outlet_id, row, occurrences[base])
         row["already_imported"] = row["hash"] in seen
         txns.append(row)
+
+    credits: list[dict] = []
+    credit_occurrences: Counter[str] = Counter()
+    for txn in statement.credits:
+        row = {
+            "date": txn.date, "narration": txn.narration,
+            "amount_paise": txn.amount_paise, "ref": txn.ref,
+            "row_number": txn.row_number, "direction": "credit",
+        }
+        credit_occurrences[base := _line_hash(outlet_id, row)] += 1
+        row["hash"] = _line_hash(outlet_id, row, credit_occurrences[base])
+        row["already_imported"] = row["hash"] in credit_seen
+        credits.append(row)
 
     # Group by payee: the owner classifies a shop once, not every line.
     groups: dict[str, dict] = {}
@@ -150,17 +171,23 @@ async def upload(file: UploadFile, outlet_id: int,
     stash_dir.mkdir(exist_ok=True)
     _stash_path(batch.id).write_text(json.dumps({
         "report_kind": REPORT_KIND, "outlet_id": outlet_id, "txns": txns,
+        "credits": credits,
     }, ensure_ascii=False), encoding="utf-8")
     db.commit()
 
-    dates = sorted({t["date"] for t in txns})
+    dates = sorted({t["date"] for t in txns + credits})
     return {
         "batch_id": batch.id,
         "filename": batch.filename,
         "date_from": dates[0] if dates else None,
         "date_to": dates[-1] if dates else None,
         "debits": len(txns),
-        "credits_ignored": len(statement.credits),
+        "credits": len(credits),
+        # Kept for older web clients during the rolling local upgrade. Credits
+        # are retained now; this field no longer describes their treatment.
+        "credits_ignored": 0,
+        "credits_already_imported": sum(t["already_imported"] for t in credits),
+        "credits_new_rows": sum(not t["already_imported"] for t in credits),
         "already_imported": len(txns) - len(new_rows),
         "new_rows": len(new_rows),
         "unreadable_rows": statement.skipped_rows,
@@ -244,12 +271,15 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
     unmapped: set[str] = set()
     vendor_cache: dict[str, int] = {}
 
-    # A statement is always imported after the fact, so every row is
-    # back-dated. Check the oldest date once rather than per row.
+    # A statement is always imported after the fact, so validate every
+    # affected period before this batch writes anything.
     bookable = [t for t in parsed["txns"]
                 if (d := chosen.get(t["match_key"])) is not None and not d.skip]
     if bookable:
         check_edit_window(min(t["date"] for t in bookable), user, db)
+    assert_dates_open(db, outlet_id, {
+        t["date"] for t in bookable + parsed.get("credits", [])
+    })
 
     for txn in parsed["txns"]:
         decision = chosen.get(txn["match_key"])
@@ -285,13 +315,115 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
         seen.add(txn["hash"])
         created += 1
 
+    credit_seen = {
+        key for (key,) in db.query(BankCredit.line_hash)
+        .filter(BankCredit.outlet_id == outlet_id)
+    }
+    credits_created = credits_duplicates = 0
+    for credit in parsed.get("credits", []):
+        if credit["hash"] in credit_seen:
+            credits_duplicates += 1
+            continue
+        db.add(BankCredit(
+            outlet_id=outlet_id, business_date=credit["date"],
+            amount_paise=credit["amount_paise"], narration=credit["narration"][:500],
+            reference=(credit.get("ref") or "")[:120], line_hash=credit["hash"],
+            import_batch_id=batch.id,
+        ))
+        credit_seen.add(credit["hash"])
+        credits_created += 1
+
     rules_saved = _save_rules(db, decisions, parsed, user, vendor_cache)
     db.flush()
     return {
         "created": created, "skipped": skipped, "duplicates": duplicates,
-        "rules_saved": rules_saved,
+        "rules_saved": rules_saved, "credits_created": credits_created,
+        "credits_duplicates": credits_duplicates,
         "unmapped": sorted(unmapped),
     }
+
+
+class CashMatchIn(BaseModel):
+    closure_id: int
+    bank_credit_id: int
+    amount_rupees: float
+
+
+@router.get("/cash-reconciliation")
+def cash_reconciliation(outlet_id: int, start: str, end: str,
+                        user: User = Depends(require_owner), db: Session = Depends(get_db)):
+    assert_outlet_access(db, user, outlet_id)
+    closures = (db.query(DayClosure)
+                  .filter(DayClosure.outlet_id == outlet_id, DayClosure.reopened_at.is_(None),
+                          DayClosure.business_date >= start, DayClosure.business_date <= end,
+                          DayClosure.moved_to_bank_paise > 0).all())
+    credits = (db.query(BankCredit)
+                 .filter(BankCredit.outlet_id == outlet_id,
+                         BankCredit.business_date >= start, BankCredit.business_date <= end).all())
+    allocations = db.query(CashBankMatch).all()
+    closure_used: dict[int, int] = {}
+    credit_used: dict[int, int] = {}
+    for allocation in allocations:
+        closure_used[allocation.closure_id] = closure_used.get(allocation.closure_id, 0) + allocation.amount_paise
+        credit_used[allocation.bank_credit_id] = credit_used.get(allocation.bank_credit_id, 0) + allocation.amount_paise
+    credit_rows = [{
+        "id": credit.id, "date": credit.business_date, "amount_paise": credit.amount_paise,
+        "remaining_paise": credit.amount_paise - credit_used.get(credit.id, 0),
+        "narration": credit.narration, "reference": credit.reference,
+    } for credit in credits]
+    closure_rows = [{
+        "id": closure.id, "date": closure.business_date,
+        "expected_paise": closure.moved_to_bank_paise,
+        "remaining_paise": closure.moved_to_bank_paise - closure_used.get(closure.id, 0),
+    } for closure in closures]
+    for closure in closure_rows:
+        closure["suggested_credit_id"] = next((
+            credit["id"] for credit in credit_rows
+            if credit["remaining_paise"] == closure["remaining_paise"]
+            and abs(date.fromisoformat(credit["date"]) -
+                    date.fromisoformat(closure["date"])).days <= 7
+        ), None)
+    return {"closures": closure_rows, "credits": credit_rows}
+
+
+@router.post("/cash-reconciliation/matches", status_code=201)
+def add_cash_match(body: CashMatchIn, user: User = Depends(require_stepup),
+                   db: Session = Depends(get_db)):
+    if body.amount_rupees <= 0:
+        raise HTTPException(422, "Match amount must be positive")
+    closure = db.get(DayClosure, body.closure_id)
+    credit = db.get(BankCredit, body.bank_credit_id)
+    if closure is None or credit is None or closure.outlet_id != credit.outlet_id:
+        raise HTTPException(422, "Cash close and bank credit must belong to the same outlet")
+    assert_outlet_access(db, user, closure.outlet_id)
+    amount = int(round(body.amount_rupees * 100))
+    closure_used = db.query(func.coalesce(func.sum(CashBankMatch.amount_paise), 0)).filter(
+        CashBankMatch.closure_id == closure.id).scalar()
+    credit_used = db.query(func.coalesce(func.sum(CashBankMatch.amount_paise), 0)).filter(
+        CashBankMatch.bank_credit_id == credit.id).scalar()
+    if amount > closure.moved_to_bank_paise - closure_used or amount > credit.amount_paise - credit_used:
+        raise HTTPException(422, "Match exceeds the remaining cash close or bank credit")
+    match = CashBankMatch(closure_id=closure.id, bank_credit_id=credit.id,
+                          amount_paise=amount, matched_by=user.id)
+    db.add(match)
+    audit(db, None, user.id, "cash-bank-match", "cash_bank_match", match.id,
+          after={"amount_rupees": body.amount_rupees})
+    db.commit()
+    return {"id": match.id}
+
+
+@router.delete("/cash-reconciliation/matches/{match_id}")
+def remove_cash_match(match_id: int, user: User = Depends(require_stepup),
+                      db: Session = Depends(get_db)):
+    match = db.get(CashBankMatch, match_id)
+    if match is None:
+        raise HTTPException(404, "Match not found")
+    closure = db.get(DayClosure, match.closure_id)
+    assert_outlet_access(db, user, closure.outlet_id)
+    db.delete(match)
+    audit(db, None, user.id, "cash-bank-unmatch", "cash_bank_match", match_id)
+    db.commit()
+    return {"ok": True}
 
 
 def _ensure_vendor(db: Session, name: str, cache: dict[str, int]) -> int:

@@ -171,6 +171,22 @@ describe("the P&L", () => {
     expect(screen.queryByText(/bills\/day/)).not.toBeInTheDocument();
   });
 
+  it("keeps total sales useful but withholds per-bill maths for manual totals", async () => {
+    show({
+      ...HEALTHY,
+      sales: { ...HEALTHY.sales, bills: null, bill_metrics_available: false },
+      per_bill: { bills: null, net_rupees: null, cost_rupees: null,
+                  food_cost_rupees: null, profit_rupees: null,
+                  contribution_rupees: null },
+      breakeven: { possible: false, why: "Bill count is not available." },
+    });
+    expect(await screen.findByText("₹84,000")).toBeInTheDocument();
+    expect(screen.getByText(/need bill-level sales details/i)).toBeInTheDocument();
+    expect(screen.queryByText("Per bill")).not.toBeInTheDocument();
+    expect(screen.queryByText("Break even")).not.toBeInTheDocument();
+    expect(screen.queryByText(/average bill/)).not.toBeInTheDocument();
+  });
+
   it("never colours an unlogged cost as if it were good news", async () => {
     show(UNTRUSTWORTHY);
     const cell = (await screen.findByText("Rent & occupancy"))
@@ -230,7 +246,8 @@ describe("the P&L", () => {
   });
 
   it("says so plainly when there are no sales", async () => {
-    show({ ...HEALTHY, sales: { ...HEALTHY.sales, bills: 0 } });
+    show({ ...HEALTHY, sales: { ...HEALTHY.sales, bills: 0,
+                                 net_rupees: 0, total_rupees: 0 } });
     expect(
       await screen.findByText(/No sales recorded for this month/),
     ).toBeInTheDocument();

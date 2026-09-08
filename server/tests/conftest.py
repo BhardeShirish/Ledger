@@ -15,13 +15,16 @@ os.environ["LEDGER_TESTING"] = "1"
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.db import engine  # noqa: E402
+from app.db import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
 
 
 @pytest.fixture()
 def client():
     engine.dispose()
+    if _tmp.exists():
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
     shutil.rmtree(_tmp, ignore_errors=True)
     with TestClient(app) as c:
         login(c, "owner", "change-me-please")

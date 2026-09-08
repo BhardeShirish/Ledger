@@ -5,17 +5,35 @@ from sqlalchemy.orm import Session
 
 from ..audit import audit, check_edit_window
 from ..db import get_db
-from ..models import Expense, User, utcnow
+from ..periods import assert_month_open
+from ..models import Expense, PurchaseReceipt, PurchaseReceiptLine, User, utcnow
 from ..security import current_user
-from ..util import paise
+from ..util import paise, validate_business_date
 from .helpers import assert_outlet_access
 from .inventory import drop_purchase_movement, ensure_purchase_movement
+from ..vendor_ledger import sync_credit_entry_for_expense
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
 # UPI first: it is how most bills are paid now, and it is the safe default -
 # a cash entry silently lowers the drawer the shop counts at closing.
 MODES = ("upi", "cash", "card", "bank", "credit", "other")
+
+
+def _assert_not_finalized_receipt_expense(db: Session, expense_id: int) -> None:
+    """Receipt posting is immutable even through the general expense route."""
+    line = (db.query(PurchaseReceiptLine.id)
+              .join(PurchaseReceipt,
+                    PurchaseReceipt.id == PurchaseReceiptLine.purchase_receipt_id)
+              .filter(PurchaseReceiptLine.expense_id == expense_id,
+                      PurchaseReceipt.status == "finalized")
+              .first())
+    if line:
+        raise HTTPException(
+            409,
+            "This expense belongs to a finalized receipt and cannot be edited or deleted. "
+            "Record any correction separately.",
+        )
 
 
 class ExpenseIn(BaseModel):
@@ -73,7 +91,9 @@ class BulkExpenseIn(BaseModel):
 def create_bulk_expenses(body: BulkExpenseIn, user: User = Depends(current_user),
                          db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
+    validate_business_date(body.business_date, no_future=True)
     check_edit_window(body.business_date, user, db)
+    assert_month_open(db, body.outlet_id, body.business_date)
     clean_lines = [ln for ln in body.lines
                    if ln.item_name.strip() and float(ln.amount_rupees or 0) > 0]
     if not clean_lines:
@@ -104,6 +124,7 @@ def create_bulk_expenses(body: BulkExpenseIn, user: User = Depends(current_user)
             ensure_purchase_movement(db, body.outlet_id, body.business_date,
                                      item_name, qty, unit,
                                      paise(rupees), user.id, e.id)
+        sync_credit_entry_for_expense(db, e, user.id)
 
     lines_paise = 0
     for ln in clean_lines:
@@ -164,6 +185,7 @@ def create_expense(body: ExpenseIn, user: User = Depends(current_user),
                        default=None, alias="X-Idempotency-Key"),
                    db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
+    validate_business_date(body.business_date, no_future=True)
     if idempotency_key:
         existing = (
             db.query(Expense)
@@ -174,6 +196,7 @@ def create_expense(body: ExpenseIn, user: User = Depends(current_user),
         if existing:
             return _serialize(existing)
     check_edit_window(body.business_date, user, db)
+    assert_month_open(db, body.outlet_id, body.business_date)
     if body.mode not in MODES:
         raise HTTPException(422, "Bad payment mode")
     if body.amount_rupees <= 0:
@@ -196,7 +219,7 @@ def create_expense(body: ExpenseIn, user: User = Depends(current_user),
     ensure_purchase_movement(db, body.outlet_id, body.business_date,
                              body.item_name, body.quantity or 0, body.unit,
                              e.amount_paise, user.id, e.id)
-    # optional khata link: expense tied to a vendor on credit becomes a credit entry
+    sync_credit_entry_for_expense(db, e, user.id)
     audit(db, None, user.id, "create", "expense", e.id,
           after={"amount_rupees": body.amount_rupees, "date": body.business_date})
     db.commit()
@@ -210,10 +233,15 @@ def update_expense(expense_id: int, body: dict, user: User = Depends(current_use
     if e is None:
         raise HTTPException(404, "Expense not found")
     assert_outlet_access(db, user, e.outlet_id)
+    _assert_not_finalized_receipt_expense(db, e.id)
     check_edit_window(e.business_date, user, db)
+    assert_month_open(db, e.outlet_id, e.business_date)
     new_date = body.get("business_date")
-    if new_date and new_date != e.business_date:
-        check_edit_window(new_date, user, db)
+    if "business_date" in body:
+        validate_business_date(new_date, no_future=True)
+        if new_date != e.business_date:
+            check_edit_window(new_date, user, db)
+            assert_month_open(db, e.outlet_id, new_date)
     before = {"amount_rupees": round(e.amount_paise / 100, 2), "mode": e.mode}
     if "mode" in body and body["mode"] not in MODES:
         raise HTTPException(422, f"Mode must be one of {', '.join(MODES)}")
@@ -234,6 +262,7 @@ def update_expense(expense_id: int, body: dict, user: User = Depends(current_use
     ensure_purchase_movement(db, e.outlet_id, e.business_date, e.item_name or "",
                              e.quantity or 0, e.unit or "", e.amount_paise,
                              user.id, e.id)
+    sync_credit_entry_for_expense(db, e, user.id)
     audit(db, None, user.id, "update", "expense", e.id, before=before,
           after={"amount_rupees": round(e.amount_paise / 100, 2)})
     db.commit()
@@ -247,7 +276,9 @@ def delete_expense(expense_id: int, user: User = Depends(current_user),
     if e is None:
         raise HTTPException(404, "Expense not found")
     assert_outlet_access(db, user, e.outlet_id)
+    _assert_not_finalized_receipt_expense(db, e.id)
     check_edit_window(e.business_date, user, db)
+    assert_month_open(db, e.outlet_id, e.business_date)
     drop_purchase_movement(db, e.id)
     db.delete(e)
     audit(db, None, user.id, "delete", "expense", e.id,

@@ -9,6 +9,7 @@ from ..db import get_db
 from ..models import (Employee, MonthLock, PayrollRun, Payslip,
                       PayslipAdjustment, User)
 from ..payroll import finalize_run, rebuild_run
+from ..periods import assert_month_open
 from ..security import current_user, require_stepup
 
 router = APIRouter(prefix="/payroll", tags=["payroll"],
@@ -156,6 +157,7 @@ def rebuild(run_id: int, db: Session = Depends(get_db), user: User = Depends(cur
         raise HTTPException(404, "Run not found")
     if run.status != "draft":
         raise HTTPException(409, "Finalized runs are immutable")
+    assert_month_open(db, run.outlet_id, f"{run.year:04d}-{run.month:02d}-01")
     rebuild_run(db, run)
     db.commit()
     return _run_detail(db, run)
@@ -170,6 +172,7 @@ def adjust(slip_id: int, body: AdjustIn, db: Session = Depends(get_db),
     run = db.get(PayrollRun, slip.run_id)
     if run.status != "draft":
         raise HTTPException(409, "Finalized runs are immutable")
+    assert_month_open(db, run.outlet_id, f"{run.year:04d}-{run.month:02d}-01")
     kind = body.kind
     value = None
     if kind == "bonus_days":
@@ -201,6 +204,7 @@ def remove_adjust(adj_id: int, db: Session = Depends(get_db), user: User = Depen
     run = db.get(PayrollRun, slip.run_id)
     if run.status != "draft":
         raise HTTPException(409, "Finalized runs are immutable")
+    assert_month_open(db, run.outlet_id, f"{run.year:04d}-{run.month:02d}-01")
     db.delete(a)
     rebuild_run(db, run)
     audit(db, None, user.id, "payroll-adjust-remove", "payslip", slip.id)
@@ -215,11 +219,10 @@ def finalize(run_id: int, db: Session = Depends(get_db), user: User = Depends(cu
         raise HTTPException(404, "Run not found")
     if run.status != "draft":
         raise HTTPException(409, "Finalized runs are immutable")
+    assert_month_open(db, run.outlet_id, f"{run.year:04d}-{run.month:02d}-01")
     finalize_run(db, run, user.id)
-    db.add(MonthLock(outlet_id=run.outlet_id, year=run.year, month=run.month,
-                     locked_by=user.id))
     audit(db, None, user.id, "payroll-finalize", "payroll_run", run.id,
-          note=f"{run.year}-{run.month:02d} locked")
+          note=f"{run.year}-{run.month:02d} finalized")
     db.commit()
     return _run_detail(db, run)
 
@@ -233,6 +236,7 @@ def mark_paid(slip_id: int, body: PaidIn, db: Session = Depends(get_db),
     run = db.get(PayrollRun, slip.run_id)
     if run.status != "finalized":
         raise HTTPException(409, "Finalize the month before marking payouts")
+    assert_month_open(db, run.outlet_id, f"{run.year:04d}-{run.month:02d}-01")
     slip.paid_paise = max(0, slip.net_paise)
     slip.mode = body.mode
     slip.paid_on = body.paid_on

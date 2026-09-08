@@ -183,6 +183,7 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
     sales: Math.round((dayData.cash_sales_paise ?? 0) / 100),
     expenses: Math.round((dayData.cash_expenses_paise ?? 0) / 100),
     advances: Math.round((dayData.advances_given_paise ?? 0) / 100),
+    losses: Math.round((dayData.cash_losses_paise ?? 0) / 100),
   };
   const [open, setOpen] = useState(false);
   const [calcOpen, setCalcOpen] = useState(false);
@@ -262,7 +263,13 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
             <Line label="+ Cash sales" value={`₹${parts.sales.toLocaleString("en-IN")}`} />
             <Line label="− Cash expenses" value={`₹${parts.expenses.toLocaleString("en-IN")}`} />
             <Line label="− Advances given" value={`₹${parts.advances.toLocaleString("en-IN")}`} />
+            <Line label="− Drawer-paid refunds/losses" value={`₹${parts.losses.toLocaleString("en-IN")}`} />
           </div>
+          {(dayData.split_unknown_paise ?? 0) > 0 && (
+            <p className="mt-2 text-xs text-ink-faint">
+              Part-paid bills are not included: their cash share is unknown.
+            </p>
+          )}
           <div className="mt-2 border-t border-rule pt-2 flex items-center justify-between">
             <span className="text-sm font-semibold">Expected in drawer</span>
             <span className="num text-2xl font-semibold">{inr(expectedPaise)}</span>

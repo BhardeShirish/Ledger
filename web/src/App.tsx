@@ -1,5 +1,8 @@
 import React, { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
+import {
+  createBrowserRouter, createRoutesFromElements, Link, Navigate, Route,
+  RouterProvider, useParams, useRouteError,
+} from "react-router-dom";
 import Layout from "./components/Layout";
 import AppErrorBoundary from "./components/AppErrorBoundary";
 import { AuthProvider, useAuth } from "./lib/auth";
@@ -32,6 +35,7 @@ const ShiftsBoard = lazy(() => import("./pages/ShiftsBoard"));
 const VendorDetail = lazy(() => import("./pages/VendorDetail"));
 const VendorsList = lazy(() => import("./pages/VendorsList"));
 const ExpensesList = lazy(() => import("./pages/ExpensesList"));
+const PurchaseOrders = lazy(() => import("./pages/PurchaseOrders"));
 const PayrollRunDetail = lazy(() => import("./pages/PayrollRunDetail"));
 
 function Protected() {
@@ -53,61 +57,70 @@ function NotFound() {
       <p className="mt-2 text-sm text-ink-faint">
         Check the address or return to the Ledger home page.
       </p>
-      <a href="/" className="mt-4 inline-block text-accent underline">Go home</a>
+      <Link to="/" className="mt-4 inline-block text-accent underline">Go home</Link>
     </main>
   );
 }
 
+function RethrowRouteError(): React.ReactElement {
+  throw useRouteError();
+}
+
+const router = createBrowserRouter(
+  createRoutesFromElements(
+    <Route errorElement={<AppErrorBoundary><RethrowRouteError /></AppErrorBoundary>}>
+      <Route path="/login" element={<Login />} />
+      <Route element={<Protected />}>
+        <Route path="/" element={<Home />} />
+        <Route path="/sales" element={<SalesSheet />} />
+        <Route path="/sales/bills" element={<Bills />} />
+        <Route path="/sales/import" element={<ImportWizard />} />
+        <Route path="/staff/attendance" element={<AttendanceGrid />} />
+        <Route path="/staff/people" element={<PeopleList />} />
+        <Route path="/staff/people/:id" element={<PersonDetail />} />
+        <Route path="/staff/shifts" element={<ShiftsBoard />} />
+        <Route path="/money/expenses" element={<ExpensesList />} />
+        <Route path="/money/purchase-orders" element={<PurchaseOrders />} />
+        <Route path="/money/vendors" element={<VendorsList />} />
+        <Route path="/money/vendors/:id" element={<VendorDetail />} />
+        <Route path="/money/cash" element={<CashRegister />} />
+        <Route path="/money/unitprices" element={<UnitPrices />} />
+        <Route path="/money/bank" element={<BankImport />} />
+        <Route path="/inventory" element={<InventoryLayout />}>
+          <Route index element={<InventoryOverview />} />
+          <Route path="items" element={<InventoryItems />} />
+          <Route path="links" element={<InventoryLinks />} />
+          <Route path="counts" element={<InventoryCounts />} />
+          <Route path="wastage" element={<InventoryWastage />} />
+          <Route path="order" element={<InventoryOrder />} />
+        </Route>
+        <Route path="/brief" element={<DailyBrief />} />
+        <Route path="/staff/payroll" element={<PayrollRuns />} />
+        <Route path="/staff/payroll/:id" element={<PayrollRunDetail />} />
+        <Route path="/staff/advances" element={<Advances />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/reports/analytics" element={<Analytics />} />
+        <Route path="/settings/*" element={<SettingsPage />} />
+        {/* Inside Protected so a mistyped URL keeps the sidebar and reads
+            as "wrong address", not "the app broke". */}
+        <Route path="*" element={<NotFound />} />
+      </Route>
+      <Route path="/money/payroll" element={<Navigate to="/staff/payroll" replace />} />
+      <Route path="/money/payroll/:id" element={<RedirectOldPayroll />} />
+    </Route>,
+  ),
+);
+
 export default function App() {
   return (
-    <BrowserRouter>
-      <MoneyProvider>
+    <MoneyProvider>
       <AuthProvider>
         <AppErrorBoundary>
-        <Suspense fallback={<div className="p-10 text-center text-ink-faint">Loading…</div>}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route element={<Protected />}>
-            <Route path="/" element={<Home />} />
-            <Route path="/sales" element={<SalesSheet />} />
-            <Route path="/sales/bills" element={<Bills />} />
-            <Route path="/sales/import" element={<ImportWizard />} />
-            <Route path="/staff/attendance" element={<AttendanceGrid />} />
-            <Route path="/staff/people" element={<PeopleList />} />
-            <Route path="/staff/people/:id" element={<PersonDetail />} />
-            <Route path="/staff/shifts" element={<ShiftsBoard />} />
-            <Route path="/money/expenses" element={<ExpensesList />} />
-            <Route path="/money/vendors" element={<VendorsList />} />
-            <Route path="/money/vendors/:id" element={<VendorDetail />} />
-            <Route path="/money/cash" element={<CashRegister />} />
-            <Route path="/money/unitprices" element={<UnitPrices />} />
-            <Route path="/money/bank" element={<BankImport />} />
-            <Route path="/inventory" element={<InventoryLayout />}>
-              <Route index element={<InventoryOverview />} />
-              <Route path="items" element={<InventoryItems />} />
-              <Route path="links" element={<InventoryLinks />} />
-              <Route path="counts" element={<InventoryCounts />} />
-              <Route path="wastage" element={<InventoryWastage />} />
-              <Route path="order" element={<InventoryOrder />} />
-            </Route>
-            <Route path="/brief" element={<DailyBrief />} />
-            <Route path="/staff/payroll" element={<PayrollRuns />} />
-            <Route path="/staff/payroll/:id" element={<PayrollRunDetail />} />
-            <Route path="/staff/advances" element={<Advances />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/reports/analytics" element={<Analytics />} />
-            <Route path="/settings/*" element={<SettingsPage />} />
-            {/* Inside Protected so a mistyped URL keeps the sidebar and reads
-                as "wrong address", not "the app broke". */}
-            <Route path="*" element={<NotFound />} />
-          </Route>
-          <Route path="/money/payroll" element={<Navigate to="/staff/payroll" replace />} />
-          <Route path="/money/payroll/:id" element={<RedirectOldPayroll />} />
-        </Routes>
-        </Suspense>
+          <Suspense fallback={<div className="p-10 text-center text-ink-faint">Loading…</div>}>
+            <RouterProvider router={router} future={{ v7_startTransition: true }} />
+          </Suspense>
         </AppErrorBoundary>
       </AuthProvider>
-      </MoneyProvider>
-    </BrowserRouter>
+    </MoneyProvider>
   );
 }

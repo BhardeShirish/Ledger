@@ -11,6 +11,7 @@ import { useAuth } from "../lib/auth";
 import { fmtDateShort, inr, monthLabel, monthLabelShort } from "../lib/format";
 import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
 import { EmptyMonthHint } from "../components/EmptyMonthHint";
+import { MonthClosePanel } from "../components/MonthClosePanel";
 
 type Ctx = { outletId: number };
 const PIE_COLORS = ["#C2410C", "#EA580C", "#F59E0B", "#78716C", "#57534E",
@@ -77,6 +78,9 @@ export default function Reports() {
           setMonthOffset((ty! - now.getFullYear()) * 12 + (tm! - (now.getMonth() + 1)));
         }}
       />
+      {me?.role === "owner" && !scopeAll && (
+        <MonthClosePanel outletId={outletId} month={month} />
+      )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Sales" value={inr(Math.round(d.sales_total_rupees * 100))} />
@@ -301,6 +305,21 @@ function InsightCards({ outletId, month, daysRecorded }:
                   <span className="ml-1 text-sm font-normal text-ink-faint">projected month-end</span>
                 </>}
           </div>
+          {fc.data.scenarios && (
+            <div className="mt-3 grid grid-cols-3 gap-2 border-t border-rule pt-3 text-center text-xs">
+              <div><span className="block text-ink-faint">Conservative</span>
+                <span className="num font-medium">{inr(Math.round(fc.data.scenarios.conservative_rupees * 100))}</span></div>
+              <div><span className="block text-ink-faint">Expected</span>
+                <span className="num font-medium">{inr(Math.round(fc.data.scenarios.base_rupees * 100))}</span></div>
+              <div><span className="block text-ink-faint">Stretch</span>
+                <span className="num font-medium">{inr(Math.round(fc.data.scenarios.stretch_rupees * 100))}</span></div>
+            </div>
+          )}
+          {fc.data.projected_rupees != null && (
+            <p className="mt-2 text-xs text-ink-faint">
+              {fc.data.confidence} confidence · {fc.data.observed_days} recorded day{fc.data.observed_days === 1 ? "" : "s"} · {fc.data.history_days} prior days
+            </p>
+          )}
           {fc.data.projected_rupees != null && !!fc.data.target_rupees && (
             <div className="mt-2">
               <div className="h-2 overflow-hidden rounded-full bg-paper-3">
@@ -329,6 +348,10 @@ function InsightCards({ outletId, month, daysRecorded }:
           )}
         </Card>
       )}
+      {me?.role === "owner" && fc.data?.projected_rupees != null && (
+        <ScenarioPanel outletId={outletId ?? me.outlet_ids[0]} month={month} />
+      )}
+      {me?.role === "owner" && outletId && <CashFlowRunway outletId={outletId} />}
 
       {/* Anomalies */}
       {!an.isLoading && (
@@ -437,7 +460,7 @@ function InsightCards({ outletId, month, daysRecorded }:
       {/* Outlet benchmark */}
       {multiOutlet && !bm.isLoading && (bm.data ?? []).length > 1 && (
         <Card className="p-4 lg:col-span-2">
-          <SectionLabel>Outlet comparison</SectionLabel>
+          <SectionLabel>Outlet comparison · contribution before payroll</SectionLabel>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[34rem] text-sm">
               <thead>
@@ -446,37 +469,135 @@ function InsightCards({ outletId, month, daysRecorded }:
                   <th className="py-1 text-right font-medium">Sales</th>
                   <th className="py-1 text-right font-medium">Expenses</th>
                   <th className="py-1 text-right font-medium">Losses</th>
-                  <th className="py-1 text-right font-medium">Profit</th>
+                  <th className="py-1 text-right font-medium">Before payroll</th>
                   <th className="py-1 text-right font-medium">Avg / active day</th>
                   <th className="py-1 text-right font-medium">Best day</th>
                 </tr>
               </thead>
               <tbody>
-                {bm.data.map((o: any, i: number) => (
-                  <tr key={o.outlet_id} className="border-b border-rule/60 last:border-0">
-                    <td className="py-1.5 pr-2">
-                      <span className="truncate">{o.name}</span>
-                      {i === 0 && <span className="ml-1.5"><Badge tone="good">top</Badge></span>}
-                    </td>
-                    <td className="num py-1.5 text-right">{inr(Math.round(o.sales_rupees * 100))}</td>
-                    <td className="num py-1.5 text-right text-ink-soft">{inr(Math.round(o.expenses_rupees * 100))}</td>
-                    <td className="num py-1.5 text-right text-ink-soft">{inr(Math.round((o.losses_rupees ?? 0) * 100))}</td>
-                    <td className={`num py-1.5 text-right font-medium ${o.profit_rupees < 0 ? "text-bad" : "text-good"}`}>
-                      {inr(Math.round(o.profit_rupees * 100))}
-                    </td>
-                    <td className="num py-1.5 text-right">
-                      {inr(Math.round(o.avg_active_day_rupees * 100))}
-                      <span className="ml-1 text-xs text-ink-faint">({o.active_days}d)</span>
-                    </td>
-                    <td className="py-1.5 text-right text-ink-soft">{o.best_weekday ?? "—"}</td>
-                  </tr>
-                ))}
+                {bm.data.map((o: any, i: number) => {
+                  // `profit_rupees` was the pre-payroll field in older servers.
+                  // Prefer the honest name while keeping mixed-version installs readable.
+                  const contribution = o.contribution_before_payroll_rupees ??
+                    o.contribution_rupees ?? o.profit_rupees;
+                  return (
+                    <tr key={o.outlet_id} className="border-b border-rule/60 last:border-0">
+                      <td className="py-1.5 pr-2">
+                        <span className="truncate">{o.name}</span>
+                        {i === 0 && <span className="ml-1.5"><Badge tone="good">top</Badge></span>}
+                      </td>
+                      <td className="num py-1.5 text-right">{inr(Math.round(o.sales_rupees * 100))}</td>
+                      <td className="num py-1.5 text-right text-ink-soft">{inr(Math.round(o.expenses_rupees * 100))}</td>
+                      <td className="num py-1.5 text-right text-ink-soft">{inr(Math.round((o.losses_rupees ?? 0) * 100))}</td>
+                      <td className={`num py-1.5 text-right font-medium ${
+                        contribution == null ? "text-ink-faint" : contribution < 0 ? "text-bad" : "text-good"}`}>
+                        {contribution == null ? "—" : inr(Math.round(contribution * 100))}
+                      </td>
+                      <td className="num py-1.5 text-right">
+                        {inr(Math.round(o.avg_active_day_rupees * 100))}
+                        <span className="ml-1 text-xs text-ink-faint">({o.active_days}d)</span>
+                      </td>
+                      <td className="py-1.5 text-right text-ink-soft">{o.best_weekday ?? "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          <p className="mt-2 text-xs text-ink-faint">
+            Sales less recorded expenses and losses. Payroll is excluded, so this is not profit.
+          </p>
         </Card>
       )}
     </>
+  );
+}
+
+function CashFlowRunway({ outletId }: { outletId: number }) {
+  const q = useQuery({
+    queryKey: ["cash-flow-runway", outletId],
+    queryFn: () => api.get(`/owner/runway?outlet_id=${outletId}`),
+  });
+  if (q.isLoading) return <Card className="p-4"><p className="text-sm text-ink-faint">Checking cash-flow sources…</p></Card>;
+  if (q.isError) return <Card className="p-4"><p className="text-sm text-bad">Cash-flow check unavailable. Try again after checking the Ledger server.</p></Card>;
+  const r = q.data;
+  if (!r?.expected_outflows_paise) return null;
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">Cash-flow runway</h2>
+        <Badge tone={r.status === "available" ? "good" : "warn"}>
+          {r.status === "available" ? "available" : "withheld"}
+        </Badge>
+      </div>
+      {r.status !== "available" ? (
+        <p className="text-sm text-ink-soft">
+          Runway is withheld because a reconciled total starting cash balance is not available.
+          {r.known_drawer_paise != null && ` The last recorded drawer remainder was ${inr(r.known_drawer_paise)}.`}
+        </p>
+      ) : <p className="text-sm text-ink-soft">Base and cautious ranges use recorded cash sources only.</p>}
+      <dl className="grid grid-cols-2 gap-2 text-sm">
+        <BeRow label="Open payables" value={inr(r.expected_outflows_paise.open_payables)} />
+        <BeRow label="Recurring bills" value={inr(r.expected_outflows_paise.recurring_bills)} />
+        <BeRow label="Approved orders" value={inr(r.expected_outflows_paise.approved_purchase_orders)} />
+        <BeRow label="Finalized payroll" value={r.expected_outflows_paise.finalized_payroll == null ? "unknown" : inr(r.expected_outflows_paise.finalized_payroll)} />
+      </dl>
+      <ul className="list-disc space-y-1 pl-4 text-xs text-ink-faint">
+        {r.caveats.map((c: string) => <li key={c}>{c}</li>)}
+      </ul>
+    </Card>
+  );
+}
+
+function ScenarioPanel({ outletId, month }: { outletId: number; month: string }) {
+  const [sales, setSales] = useState("0");
+  const [expenses, setExpenses] = useState("0");
+  const [payroll, setPayroll] = useState("0");
+  const [result, setResult] = useState<any>(null);
+  const run = useMutation({
+    mutationFn: () => api.post("/insights/scenario", {
+      outlet_id: outletId, month,
+      sales_change_percent: Number(sales),
+      expense_change_percent: Number(expenses),
+      payroll_change_rupees: Number(payroll),
+    }),
+    onSuccess: setResult,
+  });
+  return (
+    <Card className="p-4">
+      <h2 className="font-semibold">What-if plan</h2>
+      <p className="mt-0.5 text-sm text-ink-faint">
+        A local calculation over the forecast and recorded costs. It never changes the ledger.
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <label className="text-xs text-ink-soft">Sales change %
+          <input inputMode="decimal" value={sales} onChange={(e) => setSales(e.target.value)}
+                 className="mt-1 w-full rounded-md border border-rule-strong bg-paper px-2 py-1.5 num" />
+        </label>
+        <label className="text-xs text-ink-soft">Expense change %
+          <input inputMode="decimal" value={expenses} onChange={(e) => setExpenses(e.target.value)}
+                 className="mt-1 w-full rounded-md border border-rule-strong bg-paper px-2 py-1.5 num" />
+        </label>
+        <label className="text-xs text-ink-soft">Payroll change ₹
+          <input inputMode="decimal" value={payroll} onChange={(e) => setPayroll(e.target.value)}
+                 className="mt-1 w-full rounded-md border border-rule-strong bg-paper px-2 py-1.5 num" />
+        </label>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button size="sm" onClick={() => run.mutate()} disabled={run.isPending}>
+          {run.isPending ? "Calculating…" : "Calculate scenario"}
+        </Button>
+        {result && (
+          <span className="text-sm">
+            Recorded-cost contribution:{" "}
+            <strong className={`num ${result.contribution_after_recorded_costs_rupees < 0 ? "text-bad" : "text-good"}`}>
+              {inr(Math.round(result.contribution_after_recorded_costs_rupees * 100))}
+            </strong>
+          </span>
+        )}
+      </div>
+      {result && <p className="mt-2 text-xs text-ink-faint">{result.note}</p>}
+    </Card>
   );
 }
 
@@ -499,4 +620,3 @@ const profitTone = (profit: number | null | undefined, daysRecorded: number) => 
   const v = profit ?? 0;
   return v > 0 ? "good" : v < 0 ? "bad" : undefined;
 };
-

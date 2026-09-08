@@ -1,26 +1,94 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
-  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { api, downloadFile } from "../api/client";
+import { api } from "../api/client";
 import { useOutletContext } from "react-router-dom";
-import { moneyCfg } from "../lib/format";
+import { addDaysISO, moneyCfg } from "../lib/format";
 import { buildPresets, previousRange } from "../lib/ranges";
 import { ExportButton } from "../components/DataButtons";
 import SpendReview from "../components/SpendReview";
 import { PurchasePatterns, TradePatterns } from "../components/Patterns";
 import { KotGaps } from "../components/KotGaps";
 import { ProfitAndLoss } from "../components/ProfitAndLoss";
-import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorNote, SectionLabel, Spinner, StatTile } from "../components/ui";
 import { MenuItems } from "./MenuItems";
 function fmtDay(iso: string) {
   return new Date(iso + "T12:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
 type Ctx = { outletId: number };
+const MAX_ANALYTICS_RANGE_DAYS = 3660;
+
+function isISODate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year
+    && parsed.getMonth() === month - 1
+    && parsed.getDate() === day;
+}
+
+function rangeLength(start: string, end: string) {
+  if (!isISODate(start) || !isISODate(end)) return null;
+  return Math.round(
+    (new Date(end + "T12:00:00").getTime() -
+     new Date(start + "T12:00:00").getTime()) / 86400000,
+  ) + 1;
+}
+
+function dateRangeLabel(start: string, end: string) {
+  const format = (iso: string) => new Date(iso + "T12:00:00")
+    .toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return start === end ? format(start) : `${format(start)} – ${format(end)}`;
+}
+
+function monthLabel(month: string) {
+  const [year, number] = month.split("-").map(Number);
+  return new Date(year, number - 1, 1)
+    .toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+}
+
+type CoverageFact = {
+  title?: string;
+  label?: string;
+  detail?: string;
+  severity?: "act" | "watch" | "good" | "info";
+};
+
+function qualityFacts(data: any, rangeDays: number): CoverageFact[] {
+  const coverage = data?.recording_coverage ?? data?.recording ?? {};
+  const supplied = coverage.findings ?? data?.recording_findings ?? data?.quality_findings;
+  if (Array.isArray(supplied)) return supplied;
+
+  const salesDays = coverage.sales_days ?? coverage.sales_recording_days ?? data?.days_recorded ?? 0;
+  const cashCloseGaps = coverage.cash_close_gap_days ?? data?.cash_close_gap_days ??
+    data?.cash_close_gaps ?? [];
+  const facts: CoverageFact[] = [{
+    severity: salesDays === 0 ? "watch" : "info",
+    title: "Sales recording",
+    detail: salesDays === 0
+      ? `No sales days recorded in this ${rangeDays}-day range.`
+      : `${salesDays} of ${rangeDays} days have recorded sales.`,
+  }];
+  if (Array.isArray(cashCloseGaps) && cashCloseGaps.length > 0) {
+    facts.push({
+      severity: "act",
+      title: "Cash closes need attention",
+      detail: `${cashCloseGaps.length} recorded day${cashCloseGaps.length === 1 ? "" : "s"} ` +
+        "still need a cash close or review.",
+    });
+  }
+  return facts;
+}
+
+function toneFor(fact: CoverageFact) {
+  return fact.severity === "act" ? "bad" : fact.severity === "watch" ? "warn"
+    : fact.severity === "good" ? "good" : "neutral";
+}
 
 const METRIC_GROUPS: { group: string; items: { key: string; label: string }[] }[] = [
   {
@@ -58,34 +126,57 @@ const LABELS: Record<string, string> = Object.fromEntries(
 const SERIES_COLORS = ["#C2410C", "#1D4ED8", "#15803D", "#B91C1C", "#7C3AED",
   "#B45309", "#0E7490", "#57534E"];
 
+function medianOrNull(values: number[]) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 export default function Analytics() {
   const { outletId } = useOutletContext<Ctx>();
   const presets = buildPresets();
   const [rangeIdx, setRangeIdx] = useState(4); // This month
   const [custom, setCustom] = useState<{ start: string; end: string } | null>(null);
   const [scopeAll, setScopeAll] = useState(false);
-  const [selected, setSelected] = useState<string[]>(["sales_total"]);
+  const [selected, setSelected] = useState<string[]>(["sales_total", "expenses"]);
 
   const range = custom
     ? { ...custom, label: "Custom" }
     : presets[rangeIdx];
   const [compare, setCompare] = useState(true);
-  const prev = previousRange({ ...range });
+  const rangeDays = rangeLength(range.start, range.end);
+  const rangeError = rangeDays == null
+    ? "Choose both a valid start and end date."
+    : rangeDays < 1
+      ? "End date must not be before the start date."
+      : rangeDays > MAX_ANALYTICS_RANGE_DAYS
+        ? `Choose a range of up to ${MAX_ANALYTICS_RANGE_DAYS.toLocaleString("en-IN")} days.`
+        : "";
+  const prev = rangeError ? { ...range, label: "Previous period" } : previousRange({ ...range });
   const q = useQuery({
     queryKey: ["analytics", range.start, range.end, scopeAll ? null : outletId],
     queryFn: () =>
       api.get(`/stats/analytics?start=${range.start}&end=${range.end}` +
               (scopeAll || !outletId ? "" : `&outlet_id=${outletId}`)),
+    enabled: !rangeError,
   });
   const pq = useQuery({
     queryKey: ["analytics-prev", prev.start, prev.end, scopeAll ? null : outletId],
     queryFn: () =>
       api.get(`/stats/analytics?start=${prev.start}&end=${prev.end}` +
               (scopeAll || !outletId ? "" : `&outlet_id=${outletId}`)),
-    enabled: compare,
+    enabled: compare && !rangeError,
   });
 
   const data = q.data;
+  const salesTotal = data?.totals?.sales_total ?? 0;
+  const expensesTotal = data?.totals?.expenses ?? 0;
+  const hasSales = salesTotal > 0;
+  const facts = qualityFacts(data, rangeDays ?? 0);
+  const representedMonth = range.end.slice(0, 7);
   const pick = (key: string) =>
     setSelected((cur) =>
       cur.includes(key) ? cur.filter((k) => k !== key)
@@ -99,6 +190,31 @@ export default function Analytics() {
       return row;
     });
   }, [data, selected]);
+
+  const cashflowData = useMemo(() => {
+    if (!data) return [];
+    let sales = 0;
+    let expenses = 0;
+    return data.days.map((day: string, index: number) => {
+      sales += data.series.sales_total?.[index] ?? 0;
+      expenses += data.series.expenses?.[index] ?? 0;
+      return { date: day, sales, expenses };
+    });
+  }, [data]);
+
+  const pulse = useMemo(() => {
+    const sales = (data?.series?.sales_total ?? []).filter((value: number) => value > 0);
+    const total = data?.totals?.sales_total ?? 0;
+    const expenseTotal = data?.totals?.expenses ?? 0;
+    const previousTotal = pq.data?.totals?.sales_total ?? 0;
+    return {
+      typicalDay: medianOrNull(sales),
+      averageActiveDay: sales.length ? total / sales.length : null,
+      bestDay: sales.length ? Math.max(...sales) : null,
+      recordedSpendRate: total > 0 ? expenseTotal / total * 100 : null,
+      periodChange: previousTotal > 0 ? (total - previousTotal) / previousTotal * 100 : null,
+    };
+  }, [data, pq.data]);
 
   const deltaFor = (key: string): number | null => {
     if (!compare || !pq.data || !data) return null;
@@ -146,8 +262,7 @@ export default function Analytics() {
   return (
     <div className="space-y-4">
       <header>
-        <SectionLabel>Insights · Analysis</SectionLabel>
-        <h1 className="text-2xl font-semibold tracking-tight">Compare anything</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Decisions for {range.label}</h1>
       </header>
 
       {/* Range + scope */}
@@ -167,10 +282,16 @@ export default function Analytics() {
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-ink-faint">Custom:</span>
           <input type="date" value={custom?.start ?? range.start}
+                 min={isISODate(range.end)
+                   ? addDaysISO(range.end, -(MAX_ANALYTICS_RANGE_DAYS - 1)) : undefined}
+                 max={isISODate(range.end) ? range.end : undefined}
                  onChange={(e) => setCustom({ start: e.target.value, end: custom?.end ?? range.end })}
                  className="rounded-md border border-rule-strong bg-paper px-2 py-1 num" />
           →
           <input type="date" value={custom?.end ?? range.end}
+                 min={isISODate(range.start) ? range.start : undefined}
+                 max={isISODate(range.start)
+                   ? addDaysISO(range.start, MAX_ANALYTICS_RANGE_DAYS - 1) : undefined}
                  onChange={(e) => setCustom({ start: custom?.start ?? range.start, end: e.target.value })}
                  className="rounded-md border border-rule-strong bg-paper px-2 py-1 num" />
           <button onClick={() => setScopeAll(!scopeAll)}
@@ -179,26 +300,147 @@ export default function Analytics() {
             All outlets
           </button>
         </div>
+        <p className="text-xs text-ink-faint">
+          {rangeError
+            ? rangeError
+            : `Showing ${dateRangeLabel(range.start, range.end)} · ${scopeAll ? "all outlets" : "this outlet"}`}
+        </p>
       </Card>
 
-      {/* The read on the month, above the charts: an owner opening this page
-          wants "what changed and what do I do" before they want axes. */}
+      {(rangeError || q.isError) ? (
+        <Card className="space-y-3 p-4">
+          <ErrorNote msg={rangeError || (q.error as Error)?.message || "Couldn't load this analysis."} />
+          <Button variant="outline" size="sm" onClick={() => setCustom(null)}>
+            Return to {presets[rangeIdx].label}
+          </Button>
+        </Card>
+      ) : (
+        <>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile label="Sales" value={moneyCfg.symbol + salesTotal.toLocaleString("en-IN")}
+                    sub={hasSales ? "recorded in this range" : "no sales recorded"} />
+        <StatTile label="Expenses" value={moneyCfg.symbol + expensesTotal.toLocaleString("en-IN")}
+                    sub="recorded in this range" />
+        {hasSales ? (
+          <StatTile label="After recorded expenses"
+                      value={moneyCfg.symbol + (salesTotal - expensesTotal).toLocaleString("en-IN")}
+                      sub="not profit — payroll and other costs excluded" />
+        ) : (
+          <StatTile label="After recorded expenses" value="—"
+                      sub="needs recorded sales; not a profit figure" />
+        )}
+        <StatTile label="Recording days"
+                    value={String(data?.days_recorded ?? 0)}
+                    sub={`of ${rangeDays} days in range`} />
+      </div>
+
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionLabel>Business pulse</SectionLabel>
+          <span className="text-xs text-ink-faint">based only on recorded days and costs</span>
+        </div>
+        <dl className="mt-3 grid gap-x-5 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <dt className="text-ink-faint">Typical recorded sales day</dt>
+            <dd className="num mt-0.5 font-semibold">
+              {pulse.typicalDay == null ? "—" : `${moneyCfg.symbol}${pulse.typicalDay.toLocaleString("en-IN")}`}
+            </dd>
+            <dd className="text-xs text-ink-faint">middle day, not skewed by one peak</dd>
+          </div>
+          <div>
+            <dt className="text-ink-faint">Average per recorded sales day</dt>
+            <dd className="num mt-0.5 font-semibold">
+              {pulse.averageActiveDay == null ? "—" : `${moneyCfg.symbol}${Math.round(pulse.averageActiveDay).toLocaleString("en-IN")}`}
+            </dd>
+            <dd className="text-xs text-ink-faint">{data?.days_recorded ?? 0} day{(data?.days_recorded ?? 0) === 1 ? "" : "s"} with sales</dd>
+          </div>
+          <div>
+            <dt className="text-ink-faint">Best recorded sales day</dt>
+            <dd className="num mt-0.5 font-semibold">
+              {pulse.bestDay == null ? "—" : `${moneyCfg.symbol}${pulse.bestDay.toLocaleString("en-IN")}`}
+            </dd>
+            <dd className="text-xs text-ink-faint">a reference, not a target forecast</dd>
+          </div>
+          <div>
+            <dt className="text-ink-faint">Recorded spend rate</dt>
+            <dd className="num mt-0.5 font-semibold">
+              {pulse.recordedSpendRate == null ? "—" : `${pulse.recordedSpendRate.toFixed(1)}%`}
+            </dd>
+            <dd className="text-xs text-ink-faint">
+              {pulse.periodChange == null ? "needs prior sales to compare"
+                : `${pulse.periodChange >= 0 ? "+" : ""}${pulse.periodChange.toFixed(1)}% sales vs ${prev.label.toLowerCase()}`}
+            </dd>
+          </div>
+        </dl>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionLabel>Sales vs recorded expenses over time</SectionLabel>
+          <Badge>{data?.days_recorded ?? 0} sales days</Badge>
+        </div>
+        <p className="mt-1 text-xs text-ink-faint">
+          Cumulative values make the gap between money in and recorded spending visible. This is not profit.
+        </p>
+        <div className="mt-3 h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={cashflowData} margin={{ top: 4, right: 4, bottom: 0, left: -14 }}>
+              <CartesianGrid stroke="#EDE6DC" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false}
+                     axisLine={{ stroke: "#E7E0D8" }} tickFormatter={(value: string) => value.slice(8)}
+                     interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
+                     tickFormatter={(value: number) => value >= 1000 ? `${Math.round(value / 1000)}k` : String(value)} />
+              <Tooltip formatter={(value: number, name: string) =>
+                [`${moneyCfg.symbol}${Number(value).toLocaleString("en-IN")}`,
+                  name === "sales" ? "Sales" : "Recorded expenses"]}
+                       labelFormatter={(label) => fmtDay(label)}
+                       contentStyle={{ background: "#FAF7F2", border: "1px solid #E7E0D8", borderRadius: 8 }} />
+              <Legend formatter={(value) => value === "sales" ? "Sales" : "Recorded expenses"} />
+              <Area type="monotone" dataKey="sales" stroke="#C2410C" strokeWidth={2.25}
+                    fill="#C2410C" fillOpacity={0.08} />
+              <Area type="monotone" dataKey="expenses" stroke="#B91C1C" strokeWidth={1.75}
+                    fill="#B91C1C" fillOpacity={0.05} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="space-y-2.5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionLabel>Attention & recording quality</SectionLabel>
+          <span className="text-xs text-ink-faint">deterministic checks from your books</span>
+        </div>
+        <ul className="space-y-2">
+          {facts.map((fact, index) => (
+            <li key={`${fact.title ?? fact.label}-${index}`}
+                className="flex flex-wrap items-start gap-2 text-sm">
+              <Badge tone={toneFor(fact)}>{fact.severity === "act" ? "Act on this"
+                : fact.severity === "watch" ? "Keep an eye" : "For info"}</Badge>
+              <span>
+                <span className="font-semibold">{fact.title ?? fact.label}</span>
+                {fact.detail && <span className="text-ink-soft"> · {fact.detail}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      <div>
+        <SectionLabel>Month-only decisions · {monthLabel(representedMonth)}</SectionLabel>
+        <p className="mt-1 text-sm text-ink-faint">
+          Spend review and P&amp;L below represent {monthLabel(representedMonth)}, not {range.label.toLowerCase()}.
+        </p>
+      </div>
+
       <SpendReview month={range.end.slice(0, 7)}
-                   outletId={scopeAll ? null : outletId} />
+                     outletId={scopeAll ? null : outletId} />
 
-      {/* Then the operator's own scorecard: costs as a share of net sales
-          against the bands a healthy restaurant sits in. Tied to the month
-          rather than the range picker, because every published benchmark
-          is stated per month and "last 90 days" would not compare. */}
       <ProfitAndLoss month={range.end.slice(0, 7)}
-                     outletId={scopeAll ? null : outletId} />
+                       outletId={scopeAll ? null : outletId} />
 
-      {/* Then the two questions an owner actually asks the books: when am I
-          busy, and what am I paying for. Both follow the range picker
-          above rather than the month, because "last 90 days" is the useful
-          window for a trading pattern. */}
       <TradePatterns start={range.start} end={range.end}
-                     outletId={scopeAll ? null : outletId} />
+                       outletId={scopeAll ? null : outletId} />
       <PurchasePatterns start={range.start} end={range.end}
                         outletId={scopeAll ? null : outletId} />
 
@@ -211,7 +453,7 @@ export default function Analytics() {
       {/* Metric picker — order of clicking = order of importance */}
       <Card className="space-y-2.5 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <SectionLabel>Pick metrics to compare</SectionLabel>
+          <SectionLabel>Explore other metrics</SectionLabel>
           <span className="text-xs text-ink-faint">
             first pick leads the chart · tap again to remove
           </span>
@@ -291,7 +533,7 @@ export default function Analytics() {
       )}
       <Card className="p-4">
         <div className="flex items-center justify-between">
-          <SectionLabel>Daily comparison · {range.label}</SectionLabel>
+          <SectionLabel>Daily metric comparison · {range.label}</SectionLabel>
           <Badge>{data?.days_recorded ?? 0} active days</Badge>
         </div>
         <div className="mt-3 h-72">
@@ -472,6 +714,8 @@ export default function Analytics() {
 
       <MenuItems outletId={scopeAll ? null : outletId}
                  start={range.start} end={range.end} />
+        </>
+      )}
     </div>
   );
 }
@@ -479,60 +723,89 @@ export default function Analytics() {
 function MenuEngineering({ outletId, start, end }: {
   outletId: number | null; start: string; end: string;
 }) {
-  const dp = useQuery({
-    queryKey: ["dish-profit", outletId, start, end],
-    queryFn: () => api.get(`/inventory/dish-profitability?start=${start}&end=${end}` +
+  const menu = useQuery({
+    queryKey: ["menu-engineering", outletId, start, end],
+    queryFn: () => api.get(`/insights/menu-engineering?start=${start}&end=${end}` +
                            (outletId ? `&outlet_id=${outletId}` : "")),
   });
-
-  if (dp.isLoading) return null;
-  const rows: any[] = (dp.data ?? []).filter((r: any) => r.has_recipe);
-  if (rows.length < 3) return null;
-
-  const medPop = median(rows.map((r) => r.qty));
-  const medMargin = median(rows.map((r) => r.margin_percent ?? 0));
-  const quadrant = (r: any) => {
-    const pop = r.qty >= medPop, prof = (r.margin_percent ?? 0) >= medMargin;
-    return pop && prof ? { label: "★ Star", tone: "good" }
-         : pop ? { label: "Plowhorse", tone: "warn" }
-         : prof ? { label: "Puzzle", tone: "accent" }
-         : { label: "Dog", tone: "bad" };
-  };
+  const rows: any[] = menu.data?.items ?? [];
 
   return (
     <Card className="p-4">
-      <SectionLabel>Menu engineering · popularity vs profitability</SectionLabel>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { key: "star", title: "★ Stars", hint: "popular + profitable", tone: "good" },
-          { key: "plow", title: "Plowhorses", hint: "popular, thin margin", tone: "warn" },
-          { key: "puzzle", title: "Puzzles", hint: "profitable, slow", tone: "accent" },
-          { key: "dog", title: "Dogs", hint: "neither — consider cutting", tone: "bad" },
-        ].map((q) => {
-          const list = rows.filter((r: any) => quadrant(r).label.includes(q.title.replace("★ ", "")));
-          return (
-            <div key={q.key} className={`rounded-md border p-3 ${
-              q.tone === "good" ? "border-good/40 bg-good/5"
-              : q.tone === "warn" ? "border-amber-300 bg-amber-50"
-              : q.tone === "bad" ? "border-bad/40 bg-bad/5"
-              : "border-accent/40 bg-accent-soft"}`}>
-              <div className="text-xs font-bold uppercase tracking-wide">{q.title}</div>
-              <div className="mt-1 space-y-0.5 text-xs">
-                {list.slice(0, 5).map((r: any) => (
-                  <div key={r.item} className="flex justify-between gap-1">
-                    <span className="truncate">{r.item}</span>
-                    <span className="num shrink-0">{r.margin_percent}%</span>
-                  </div>
-                ))}
-                {list.length === 0 && <div className="text-ink-faint">none</div>}
-              </div>
-            </div>
-          );
-        })}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <SectionLabel>Menu engineering</SectionLabel>
+          <h2 className="mt-1 font-semibold">Demand with evidence-gated food cost</h2>
+          <p className="mt-1 text-sm text-ink-faint">
+            Food-cost and recorded contribution signals appear only when every recipe link and purchase cost is compatible.
+          </p>
+        </div>
+        <div className="flex gap-2 text-xs">
+          <a className="rounded-md border border-rule-strong px-2.5 py-1.5 hover:bg-paper-3" href="/inventory/links">
+            Recipes
+          </a>
+          <a className="rounded-md border border-rule-strong px-2.5 py-1.5 hover:bg-paper-3" href="/money/unitprices">
+            Purchase costs
+          </a>
+        </div>
       </div>
-      <p className="mt-2 text-xs text-ink-faint">
-        median popularity {Math.round(medPop)} plates · median margin {medMargin}%
-        · ingredient costs from confirmed auto-recipes
+      {menu.isLoading ? (
+        <div className="mt-4 grid animate-pulse gap-2 sm:grid-cols-2">
+          <div className="h-20 rounded-md bg-paper-3" />
+          <div className="h-20 rounded-md bg-paper-3" />
+        </div>
+      ) : menu.isError ? (
+        <div className="mt-4"><ErrorNote msg="Menu evidence could not be loaded. Try refreshing this analysis." /></div>
+      ) : rows.length === 0 ? (
+        <EmptyState title="No item-level sales in this range"
+                    hint="Import POS item sales to compare dish demand and confirm recipe links before costing dishes." />
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[700px] text-left text-sm">
+            <thead className="border-b border-rule text-xs text-ink-faint">
+              <tr>
+                <th className="pb-2 font-medium">Dish</th>
+                <th className="pb-2 font-medium">Demand</th>
+                <th className="pb-2 font-medium">Momentum</th>
+                <th className="pb-2 font-medium">Food cost</th>
+                <th className="pb-2 font-medium">Recorded contribution</th>
+                <th className="pb-2 font-medium">Evidence</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-rule">
+              {rows.map((row: any) => (
+                <tr key={`${row.outlet_id}-${row.item}`}>
+                  <td className="py-3 pr-4 font-medium">
+                    <div>{row.item}</div>
+                    {outletId == null && <div className="mt-0.5 text-xs font-normal text-ink-faint">Outlet {row.outlet_id}</div>}
+                  </td>
+                  <td className="num py-3 pr-4">{row.sales_velocity_per_day}/day</td>
+                  <td className="num py-3 pr-4">
+                    {row.momentum_percent == null ? "—" : `${row.momentum_percent > 0 ? "+" : ""}${row.momentum_percent}%`}
+                  </td>
+                  {row.cost_status === "recorded" ? (
+                    <>
+                      <td className="num py-3 pr-4">
+                        {moneyCfg.symbol}{row.food_cost_per_dish_rupees.toLocaleString("en-IN")} · {row.food_cost_percent}%
+                      </td>
+                      <td className="num py-3 pr-4">
+                        {moneyCfg.symbol}{row.recorded_contribution_after_food_cost_rupees.toLocaleString("en-IN")}
+                      </td>
+                      <td className="py-3"><Badge tone="good">complete</Badge></td>
+                    </>
+                  ) : (
+                    <td colSpan={3} className="py-3 text-xs text-ink-faint">
+                      Withheld · {row.cost_withheld_reason}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-ink-faint">
+        Recorded contribution is sales less recorded ingredient cost only; it is not profit and excludes labour, rent, and other costs.
       </p>
     </Card>
   );

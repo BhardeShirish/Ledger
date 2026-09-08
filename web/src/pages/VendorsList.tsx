@@ -1,18 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useOutletContext } from "react-router-dom";
 import { useState } from "react";
 import { api } from "../api/client";
-import { inr } from "../lib/format";
+import { inr, todayISO } from "../lib/format";
 import { ExportButton } from "../components/DataButtons";
 import {
   Badge, Button, Card, EmptyState, Field, Input, SectionLabel, Sheet, Spinner,
 } from "../components/ui";
 
-export function useVendors() {
-  return useQuery({ queryKey: ["vendors"], queryFn: () => api.get("/vendors") });
+export function useVendors(outletId?: number) {
+  return useQuery({
+    queryKey: ["vendors", outletId ?? null],
+    queryFn: () => api.get(`/vendors${outletId ? `?outlet_id=${outletId}` : ""}`),
+  });
 }
 
 export default function VendorsList() {
-  const q = useVendors();
+  const { outletId } = useOutletContext<{ outletId: number }>();
+  const q = useVendors(outletId);
+  const aging = useQuery({
+    queryKey: ["vendor-aging", outletId],
+    queryFn: () => api.get(`/vendors/aging?outlet_id=${outletId}&as_of=${todayISO()}`),
+  });
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -38,6 +47,30 @@ export default function VendorsList() {
         <ExportButton entity="vendors" />
         <Button size="sm" onClick={() => setOpen(true)}>+ Vendor</Button>
       </header>
+
+      {(aging.data ?? []).length > 0 && (
+        <Card className="overflow-hidden">
+          <div className="border-b border-rule px-4 py-3">
+            <h2 className="font-semibold">Payable aging</h2>
+            <p className="mt-0.5 text-sm text-ink-faint">Open credit purchases, aged from purchase date.</p>
+          </div>
+          <div className="divide-y divide-rule">
+            {aging.data.slice(0, 8).map((row: any) => (
+              <a key={row.vendor_id} href={`/money/vendors/${row.vendor_id}`}
+                 className="flex items-center gap-3 px-4 py-2.5 hover:bg-paper-3/50">
+                <span className="min-w-0 flex-1 truncate font-medium">{row.vendor}</span>
+                {(["over_90", "61_90", "31_60", "1_30"] as const).map((bucket) =>
+                  row.buckets[bucket] > 0 && (
+                    <Badge key={bucket} tone={bucket === "over_90" ? "bad" : "warn"}>
+                      {bucket.replace("_", "–")} {inr(row.buckets[bucket])}
+                    </Badge>
+                  ))}
+                <span className="num font-medium">{inr(row.total_paise)}</span>
+              </a>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card className="divide-y divide-rule">
         {rows.length === 0 && (
@@ -72,4 +105,3 @@ export default function VendorsList() {
     </div>
   );
 }
-

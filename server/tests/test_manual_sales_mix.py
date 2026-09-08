@@ -6,7 +6,7 @@ only POS imports fill net_paise. The month summary used net_paise for the
 Cash / UPI / Card all sitting at zero underneath a correct sales total. That
 is the worst kind of wrong number: confident, prominent and quietly false.
 """
-from datetime import date
+from datetime import date, timedelta
 
 TODAY = date.today().isoformat()
 
@@ -33,3 +33,12 @@ def test_manual_sales_appear_in_the_payment_mix(client, outlet_id):
     # The mix must also add up to the headline, or the card contradicts the tile.
     assert sum(mix.values()) == d["sales_total_rupees"]
     assert d["sales_net_rupees"] == 10000.0
+
+
+def test_manual_sales_reject_malformed_and_future_business_dates(client, outlet_id):
+    base = {"outlet_id": outlet_id, "channel_kind": "cash", "amount_rupees": 100}
+    for business_date in ("not-a-date", "2026-02-30",
+                          (date.today() + timedelta(days=1)).isoformat()):
+        r = client.put("/api/sales/manual", json={**base, "business_date": business_date})
+        assert r.status_code == 422, r.text
+        assert "date" in r.json()["detail"].lower()

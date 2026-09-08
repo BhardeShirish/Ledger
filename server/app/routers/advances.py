@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ..audit import audit
 from ..db import get_db
 from ..models import Advance, AdvanceRepayment, Employee, User
+from ..periods import assert_month_open
 from ..security import current_user, require_stepup
 
 router = APIRouter(prefix="/advances", tags=["advances"], dependencies=[Depends(require_stepup)])
@@ -54,6 +55,10 @@ def list_advances(employee_id: int | None = None, status: str | None = None,
 @router.post("", status_code=201)
 def give_advance(body: AdvanceIn, db: Session = Depends(get_db),
                  user: User = Depends(current_user)):
+    employee = db.get(Employee, body.employee_id)
+    if employee is None:
+        raise HTTPException(404, "Employee not found")
+    assert_month_open(db, employee.outlet_id, body.date)
     paise_amt = int(round(body.amount_rupees * 100))
     if paise_amt <= 0:
         raise HTTPException(422, "Amount must be positive")
@@ -74,6 +79,10 @@ def repay(advance_id: int, body: RepayIn, db: Session = Depends(get_db),
     a = db.get(Advance, advance_id)
     if a is None:
         raise HTTPException(404, "Advance not found")
+    employee = db.get(Employee, a.employee_id)
+    if employee is None:
+        raise HTTPException(404, "Employee not found")
+    assert_month_open(db, employee.outlet_id, body.date)
     amt = int(round(body.amount_rupees * 100))
     if amt <= 0 or amt > a.remaining_paise:
         raise HTTPException(422, "Invalid repayment amount")

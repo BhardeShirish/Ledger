@@ -76,4 +76,4 @@ def test_cover_is_unknown_rather_than_alarming_for_a_single_purchase(client, out
     row = next(x for x in r.json()["items"] if x["id"] == item)
 
     assert row["days_of_cover"] is None
-    assert row["usage_per_day"] == 0
+    assert row["usage_per_day"] is None

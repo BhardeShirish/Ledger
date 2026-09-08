@@ -13,15 +13,26 @@ type Ctx = { outletId: number };
 export default function Home() {
   const { outletId } = useOutletContext<Ctx>();
   const { me } = useAuth();
+  const today = todayISO();
   const q = useQuery({
     queryKey: ["home", outletId],
-    queryFn: () => api.get(`/stats/home?date=${todayISO()}`),
+    queryFn: () => api.get(`/stats/home?date=${today}`),
     refetchInterval: 60_000,
   });
   const inv = useQuery({
     queryKey: ["brief-inv", outletId],
     queryFn: () => api.get(`/inventory/overview?outlet_id=${outletId}`),
     refetchInterval: 120_000,
+  });
+  const closeInbox = useQuery({
+    enabled: me?.role === "owner" && Boolean(outletId),
+    queryKey: ["close-inbox-home", outletId],
+    queryFn: () => api.get(`/control/close-inbox?outlet_id=${outletId}&month=${todayISO().slice(0, 7)}`),
+  });
+  const intelligence = useQuery({
+    enabled: me?.role === "owner" && Boolean(outletId),
+    queryKey: ["intelligence-brief", outletId, today],
+    queryFn: () => api.get(`/intelligence/brief?outlet_id=${outletId}&as_of=${today}`),
   });
 
   if (q.isLoading) return <Spinner />;
@@ -56,6 +67,18 @@ export default function Home() {
 
       <CatchUpCard />
 
+      {me?.role === "owner" && closeInbox.data?.items?.length > 0 && (
+        <Link to="/reports" className="block rounded-lg border border-amber-300/70 bg-amber-50/40 px-4 py-3 hover:bg-amber-50">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold">Month-close review</span>
+            <Badge tone={closeInbox.data.blockers ? "bad" : "warn"}>
+              {closeInbox.data.blockers || closeInbox.data.items.length} need attention
+            </Badge>
+          </div>
+          <p className="mt-1 text-sm text-ink-soft">Resolve cash, split-payment, stock, payroll and supplier exceptions before closing the month.</p>
+        </Link>
+      )}
+
       {mine && (
         <>
           {/* The daily flow. This is the whole point of the page, so it is the
@@ -77,7 +100,10 @@ export default function Home() {
               <div className="mt-0.5 text-xs text-ink-faint">
                 {inv.data?.below_min_count
                   ? `${inv.data.below_min_count} items running low`
-                  : "stock healthy"}
+                  : (inv.data?.items ?? []).some((item: any) =>
+                    item.intelligence_confidence === "insufficient")
+                  ? "stock evidence incomplete"
+                  : "no supported reorder risks"}
               </div>
             </Link>
             <Link to="/brief"
@@ -85,7 +111,9 @@ export default function Home() {
               <div className="flex items-center gap-1.5 text-sm font-semibold">
                 <ClipboardList size={15} className="text-ink-faint" /> Today's brief
               </div>
-              <div className="mt-0.5 text-xs text-ink-faint">one-glance summary</div>
+              <div className="mt-0.5 truncate text-xs text-ink-faint">
+                {intelligence.data?.feed?.[0]?.title ?? "one-glance summary"}
+              </div>
             </Link>
           </div>
         </>

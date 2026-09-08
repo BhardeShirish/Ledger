@@ -4,7 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { Landmark, CheckCircle2, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
-import { fmtDateShort, inr } from "../lib/format";
+import { addDaysISO, fmtDateShort, inr, todayISO } from "../lib/format";
 import {
   Badge, Button, Card, ErrorNote, Input, SectionLabel, Select, Spinner,
 } from "../components/ui";
@@ -47,6 +47,10 @@ export default function BankImport() {
   const cats = useQuery({ queryKey: ["categories"], queryFn: () => api.get("/lists/categories") });
   const vendors = useQuery({ queryKey: ["vendors"], queryFn: () => api.get("/vendors") });
   const rules = useQuery({ queryKey: ["bank-rules"], queryFn: () => api.get("/bank/rules") });
+  const recon = useQuery({
+    queryKey: ["cash-reconciliation", outletId],
+    queryFn: () => api.get(`/bank/cash-reconciliation?outlet_id=${outletId}&start=${addDaysISO(todayISO(), -90)}&end=${todayISO()}`),
+  });
 
   // Seed the form from what the server already knows about each payee.
   useEffect(() => {
@@ -85,6 +89,7 @@ export default function BankImport() {
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["bank-rules"] });
       qc.invalidateQueries({ queryKey: ["home"] });
+      qc.invalidateQueries({ queryKey: ["cash-reconciliation"] });
     },
     onError: (e: any) => setErr(e.message),
   });
@@ -125,9 +130,9 @@ export default function BankImport() {
         <h1 className="text-2xl font-semibold tracking-tight">Import from your bank</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-faint">
           Download the account statement from net banking and drop it here.
-          Ledger reads the money that went <b>out</b>, groups it by who you paid,
-          and asks you to name each one only the first time. Money coming in is
-          ignored — that is your sales, not an expense.
+          Ledger groups money that went <b>out</b> by who you paid and asks you
+          to name each one only the first time. Statement credits are retained
+          separately so cash deposits can be reconciled; they never become sales.
         </p>
       </header>
 
@@ -173,7 +178,8 @@ export default function BankImport() {
             <Box label="New to Ledger" value={String(preview.new_rows)} tone="good" />
             <Box label="Already imported" value={String(preview.already_imported)}
                  hint={preview.already_imported ? "won't be added twice" : undefined} />
-            <Box label="Money in (ignored)" value={String(preview.credits_ignored)} />
+            <Box label="Money in retained" value={String(preview.credits ?? 0)}
+                 hint="for cash-deposit matching" />
           </div>
           <p className="text-xs text-ink-faint">
             {preview.filename} · {fmtDateShort(preview.date_from)} → {fmtDateShort(preview.date_to)}
@@ -299,7 +305,69 @@ export default function BankImport() {
           )}
         </div>
       </Card>
+
+      {!preview && (
+        <CashDepositReconciliation outletId={outletId} data={recon.data}
+                                   loading={recon.isLoading} />
+      )}
     </div>
+  );
+}
+
+function CashDepositReconciliation({ outletId, data, loading }: {
+  outletId: number; data: any; loading: boolean;
+}) {
+  const guarded = useGuarded();
+  const qc = useQueryClient();
+  const match = useMutation({
+    mutationFn: ({ closure, credit }: { closure: any; credit: any }) =>
+      guarded(() => api.post("/bank/cash-reconciliation/matches", {
+        closure_id: closure.id, bank_credit_id: credit.id,
+        amount_rupees: Math.min(closure.remaining_paise, credit.remaining_paise) / 100,
+      })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cash-reconciliation", outletId] }),
+  });
+  const closures = (data?.closures ?? []).filter((row: any) => row.remaining_paise > 0);
+  const credits = (data?.credits ?? []).filter((row: any) => row.remaining_paise > 0);
+  if (loading) return null;
+  return (
+    <Card className="overflow-hidden">
+      <div className="border-b border-rule px-4 py-3">
+        <h2 className="font-semibold">Cash deposits to reconcile</h2>
+        <p className="mt-0.5 text-sm text-ink-faint">
+          Match cash removed from a closed drawer to a bank statement credit. Ledger never confirms a match on its own.
+        </p>
+      </div>
+      {closures.length === 0 ? (
+        <p className="px-4 py-5 text-sm text-good">All recent cash removals are reconciled.</p>
+      ) : (
+        <div className="divide-y divide-rule">
+          {closures.map((closure: any) => {
+            const suggested = credits.find((credit: any) => credit.id === closure.suggested_credit_id);
+            return (
+              <div key={closure.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                <span className="w-20 text-ink-soft">{fmtDateShort(closure.date)}</span>
+                <span className="num font-medium">{inr(closure.remaining_paise)}</span>
+                {suggested ? (
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-ink-faint">
+                      Suggested bank credit {fmtDateShort(suggested.date)} · {suggested.narration || suggested.reference || "no narration"}
+                    </span>
+                    <Button size="sm" variant="outline" disabled={match.isPending}
+                            onClick={() => match.mutate({ closure, credit: suggested })}>
+                      Confirm match
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-ink-faint">No exact recent bank credit found.</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <ErrorNote msg={match.error?.message ?? ""} />
+    </Card>
   );
 }
 

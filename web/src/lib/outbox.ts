@@ -7,7 +7,7 @@ export type OutboxItem = {
   url: string;          // API path beginning /api
   method: "POST" | "PUT";
   body: any;
-  label: string;        // human description for the pending chip
+  summary: string;      // immutable, human-readable record of what will sync
   ts: number;
   userId: number | null;
   outletId: number | null;
@@ -20,7 +20,17 @@ const listeners = new Set<() => void>();
 
 export function getOutbox(): OutboxItem[] {
   try {
-    return JSON.parse(localStorage.getItem(KEY) || "[]");
+    const raw = JSON.parse(localStorage.getItem(KEY) || "[]");
+    const items = raw.map((item: any) => ({
+      ...item,
+      // Upgrade old entries on read so queued financial work is never shown
+      // as an opaque endpoint name.
+      summary: item.summary ?? fallbackSummary(item.url, item.body),
+    }));
+    if (items.some((item: any, index: number) => !raw[index].summary)) {
+      localStorage.setItem(KEY, JSON.stringify(items));
+    }
+    return items;
   } catch {
     return [];
   }
@@ -50,11 +60,25 @@ function currentUserId() {
   return value ? Number(value) : null;
 }
 
+function fallbackSummary(url: string, body: any) {
+  const amount = Number(body?.amount_rupees);
+  const rupees = Number.isFinite(amount) ? `₹${amount}` : "amount not specified";
+  const date = body?.business_date ?? "date not specified";
+  if (url === "/api/sales/manual") {
+    return `Sale · ${body?.channel_kind ?? "channel"} · ${rupees} · ${date}`;
+  }
+  if (url === "/api/expenses") {
+    return `Expense · ${body?.category_name ?? (body?.category_id ? `category #${body.category_id}` : "category")} · ${rupees} · ${body?.mode ?? "mode"} · ${date}`;
+  }
+  return url.replace("/api/", "") || "Queued entry";
+}
+
 export function enqueue(url: string, method: "POST" | "PUT",
-                        body: any, label: string) {
+                        body: any, summary?: string) {
   const items = getOutbox();
   items.push({
-    id: crypto.randomUUID(), url, method, body, label, ts: Date.now(),
+    id: crypto.randomUUID(), url, method, body,
+    summary: summary || fallbackSummary(url, body), ts: Date.now(),
     userId: currentUserId(),
     outletId: Number.isFinite(Number(body?.outlet_id))
       ? Number(body.outlet_id) : null,

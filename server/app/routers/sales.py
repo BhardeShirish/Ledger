@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from ..audit import audit, check_edit_window
 from ..db import get_db
+from ..periods import assert_month_open
 from ..models import SalesBill, SalesChannel, SalesDaily, User
 from ..security import current_user, require_owner
+from ..util import validate_business_date
 from .helpers import assert_outlet_access
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -135,6 +137,7 @@ def allocate_split(bill_id: int, body: SplitAllocIn,
     if bill is None:
         raise HTTPException(404, "Bill not found")
     assert_outlet_access(db, user, bill.outlet_id)
+    assert_month_open(db, bill.outlet_id, bill.business_date)
     if bill.channel_kind != "split":
         raise HTTPException(409, "This bill is not an unresolved split")
 
@@ -287,7 +290,9 @@ def sheet(outlet_id: int, date: str, user: User = Depends(current_user),
 def put_manual(body: ManualIn, user: User = Depends(current_user),
                db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
+    validate_business_date(body.business_date, no_future=True)
     check_edit_window(body.business_date, user, db)
+    assert_month_open(db, body.outlet_id, body.business_date)
     if body.channel_kind not in CHANNEL_KINDS - {"split", "due"}:
         raise HTTPException(422, "Invalid manual sales channel")
     if not math.isfinite(body.amount_rupees) or body.amount_rupees < 0:

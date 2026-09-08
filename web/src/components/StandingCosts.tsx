@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Check, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
 import {
@@ -37,6 +37,13 @@ export function StandingCostsCard() {
     mutationFn: (id: number) => guarded(() => api.del(`/recurring/${id}`)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["recurring"] }),
   });
+  const review = useMutation({
+    mutationFn: (id: number) => guarded(() => api.post(`/recurring/${id}/review`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recurring"] });
+      qc.invalidateQueries({ queryKey: ["intelligence-brief"] });
+    },
+  });
 
   const items = q.data?.items ?? [];
   const catList = Array.isArray(cats.data) ? cats.data : (cats.data?.items ?? []);
@@ -71,11 +78,18 @@ export function StandingCostsCard() {
                 </p>
                 <p className="text-xs text-ink-faint">
                   {r.category} · day {r.day_of_month} · {money(r.yearly_rupees)}/year
+                  {r.review_due ? " · review due" : ` · next review ${r.next_review_date}`}
                 </p>
               </div>
               <span className="shrink-0 tabular-nums text-sm font-semibold">
                 {money(r.amount_rupees)}
               </span>
+              <button type="button" aria-label={`Review ${r.name || r.category}`}
+                      title={r.review_due ? "Record owner review" : "Reviewed"}
+                      onClick={() => review.mutate(r.id)}
+                      className={`shrink-0 rounded p-1 ${r.review_due ? "text-amber-700 hover:text-good" : "text-good hover:text-accent"}`}>
+                <Check size={16} />
+              </button>
               <button type="button" aria-label={`Stop ${r.name || r.category}`}
                       onClick={() => stop.mutate(r.id)}
                       className="shrink-0 rounded p-1 text-ink-faint hover:text-bad">
@@ -124,6 +138,7 @@ function AddStandingCost({ categories, onDone, onCancel }: {
   const [categoryId, setCategoryId] = useState<string>("");
   const [amount, setAmount] = useState("");
   const [day, setDay] = useState("1");
+  const [reviewCadence, setReviewCadence] = useState("90");
   const [start, setStart] = useState(thisMonth());
   const [err, setErr] = useState("");
 
@@ -134,12 +149,14 @@ function AddStandingCost({ categories, onDone, onCancel }: {
       amount_rupees: Number(amount),
       day_of_month: Number(day),
       start_month: start,
+      review_cadence_days: Number(reviewCadence),
     })),
     onSuccess: onDone,
     onError: (e: any) => setErr(e?.message || "Couldn't save that."),
   });
 
-  const ready = categoryId && Number(amount) > 0 && /^\d{4}-\d{2}$/.test(start);
+  const ready = categoryId && Number(amount) > 0 && Number(reviewCadence) >= 1
+    && /^\d{4}-\d{2}$/.test(start);
 
   return (
     <div className="space-y-3 rounded-md border border-rule-strong bg-paper-2 p-3">
@@ -157,7 +174,7 @@ function AddStandingCost({ categories, onDone, onCancel }: {
           ))}
         </Select>
       </Field>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-4">
         <Field label="Amount (₹)">
           <Input inputMode="decimal" value={amount} className="text-right"
                  onChange={(e) => setAmount(e.target.value)} />
@@ -168,6 +185,10 @@ function AddStandingCost({ categories, onDone, onCancel }: {
         </Field>
         <Field label="Paying since" hint="YYYY-MM">
           <Input value={start} onChange={(e) => setStart(e.target.value)} />
+        </Field>
+        <Field label="Review every (days)">
+          <Input inputMode="numeric" value={reviewCadence} className="text-right"
+                 onChange={(e) => setReviewCadence(e.target.value)} />
         </Field>
       </div>
       {err && <ErrorNote msg={err} />}

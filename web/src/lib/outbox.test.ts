@@ -58,7 +58,9 @@ describe("offline outbox", () => {
     await flush;
 
     const left = getOutbox();
-    expect(left.map((i) => i.label)).toEqual(["Vegetables"]);
+    expect(left.map((i) => i.summary)).toEqual([
+      "Vegetables",
+    ]);
   });
 
   it("keeps a failed entry queued with the server's reason", async () => {
@@ -71,5 +73,14 @@ describe("offline outbox", () => {
 
     expect(await flushOutbox()).toBe(0);
     expect(getOutbox()[0].error).toBe("The month is closed");
+  });
+
+  it("stores an immutable summary for a queued sale", () => {
+    enqueue("/api/sales/manual", "PUT", {
+      outlet_id: 1, channel_kind: "cash", amount_rupees: 450,
+      business_date: "2026-09-08",
+    });
+
+    expect(getOutbox()[0].summary).toBe("Sale · cash · ₹450 · 2026-09-08");
   });
 });

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { useState } from "react";
 import { Download, Lock, ShieldCheck, UserPlus } from "lucide-react";
 import { api, downloadFile } from "../api/client";
@@ -14,7 +14,12 @@ import { CostGroupsCard, HealthyBandsCard, StandingCostsCard } from "../componen
 
 export default function SettingsPage() {
   const { me } = useAuth();
+  const { outletId } = useOutletContext<{ outletId: number }>();
   const { pathname } = useLocation();
+  const sub = pathname.split("/")[2] || "";
+  // Account recovery is deliberately available to every signed-in role;
+  // administration below remains owner-only.
+  if (sub === "account") return <AccountPage />;
   if (me?.role !== "owner") {
     return (
       <Card className="mx-auto mt-10 max-w-md p-8 text-center">
@@ -24,8 +29,6 @@ export default function SettingsPage() {
       </Card>
     );
   }
-  const sub = pathname.split("/")[2] || "";
-  if (sub === "account") return <AccountPage />;
   return (
     <div className="space-y-5">
       <header>
@@ -35,6 +38,7 @@ export default function SettingsPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RulesCard />
+        <OwnerPolicyCard outletId={outletId} />
         <DivisorCard />
         <StandingCostsCard />
         <CostGroupsCard />
@@ -46,8 +50,106 @@ export default function SettingsPage() {
         <OutletsCard />
         <AuditCard />
         <BackupCard />
+        <SystemHealthCard outletId={outletId} />
       </div>
     </div>
+  );
+}
+
+function OwnerPolicyCard({ outletId }: { outletId: number }) {
+  const qc = useQueryClient();
+  const guarded = useGuarded();
+  const q = useQuery({
+    enabled: Boolean(outletId), queryKey: ["owner-policy", outletId],
+    queryFn: () => api.get(`/owner/policies?outlet_id=${outletId}`),
+  });
+  const [draft, setDraft] = useState<any>(null);
+  const p = draft ?? q.data;
+  const save = useMutation({
+    mutationFn: () => guarded(() => api.put("/owner/policies", {
+      outlet_id: outletId,
+      cash_variance_alert_rupees: Number(p.cash_variance_alert_rupees),
+      minimum_data_coverage_percent: Number(p.minimum_data_coverage_percent),
+      stock_count_cadence_days: Number(p.stock_count_cadence_days),
+      stockout_lead_days: Number(p.stockout_lead_days),
+      payable_overdue_days: Number(p.payable_overdue_days),
+      purchase_approval_limit_rupees: Number(p.purchase_approval_limit_rupees),
+      minimum_cash_buffer_rupees: p.minimum_cash_buffer_rupees === "" ? null : Number(p.minimum_cash_buffer_rupees),
+    })),
+    onSuccess: () => {
+      setDraft(null);
+      qc.invalidateQueries({ queryKey: ["owner-policy", outletId] });
+      qc.invalidateQueries({ queryKey: ["intelligence-brief"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+  const set = (key: string, value: string) => setDraft({ ...p, [key]: value });
+  return (
+    <Card className="space-y-3.5 p-5">
+      <SectionLabel>Owner operating policies</SectionLabel>
+      <p className="text-xs leading-relaxed text-ink-faint">
+        These thresholds flag review work; they never edit cash, stock, bills, or purchase facts.
+      </p>
+      {q.isLoading && <Spinner />}
+      {q.isError && <ErrorNote msg="Couldn't load owner policies. Try again after checking the Ledger server." />}
+      {p && <div className="grid gap-3 sm:grid-cols-2">
+        <PolicyInput label="Cash variance alert (₹)" value={p.cash_variance_alert_rupees} onChange={(v: string) => set("cash_variance_alert_rupees", v)} />
+        <PolicyInput label="Minimum data coverage (%)" value={p.minimum_data_coverage_percent} onChange={(v: string) => set("minimum_data_coverage_percent", v)} />
+        <PolicyInput label="Stock count cadence (days)" value={p.stock_count_cadence_days} onChange={(v: string) => set("stock_count_cadence_days", v)} />
+        <PolicyInput label="Stock-out lead time (days)" value={p.stockout_lead_days} onChange={(v: string) => set("stockout_lead_days", v)} />
+        <PolicyInput label="Payable overdue after (days)" value={p.payable_overdue_days} onChange={(v: string) => set("payable_overdue_days", v)} />
+        <PolicyInput label="Purchase warning limit (₹)" value={p.purchase_approval_limit_rupees} onChange={(v: string) => set("purchase_approval_limit_rupees", v)} />
+        <PolicyInput label="Minimum cash buffer (₹)" hint="optional" value={p.minimum_cash_buffer_rupees ?? ""} onChange={(v: string) => set("minimum_cash_buffer_rupees", v)} />
+      </div>}
+      <Button disabled={!p || save.isPending} onClick={() => save.mutate()}>
+        {save.isPending ? "Saving…" : "Save policies"}
+      </Button>
+      <ErrorNote msg={save.error?.message ?? ""} />
+    </Card>
+  );
+}
+
+function PolicyInput({ label, hint, value, onChange }: {
+  label: string; hint?: string; value: string | number; onChange: (value: string) => void;
+}) {
+  return <Field label={label} hint={hint}>
+    <Input inputMode="decimal" className="text-right" value={String(value)}
+           onChange={(e) => onChange(e.target.value)} />
+  </Field>;
+}
+
+function SystemHealthCard({ outletId }: { outletId: number }) {
+  const q = useQuery({
+    enabled: Boolean(outletId), queryKey: ["system-health", outletId],
+    queryFn: () => api.get(`/owner/system-health?outlet_id=${outletId}`),
+  });
+  const download = useMutation({
+    mutationFn: () => downloadFile(
+      `${q.data.last_automatic_backup.download_path}?outlet_id=${outletId}`,
+      q.data.last_automatic_backup.name),
+  });
+  const h = q.data;
+  return (
+    <Card className="space-y-3.5 p-5">
+      <SectionLabel>System health & recovery</SectionLabel>
+      <p className="text-xs text-ink-faint">Read-only checks; restoring is deliberately an offline procedure.</p>
+      {q.isLoading && <Spinner />}
+      {q.isError && <ErrorNote msg="System health is unavailable. The Ledger server may not be able to read its data folder." />}
+      {h && <>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <FactInline label="Database" value={h.database.size_bytes == null ? "unavailable" : `${Math.ceil(h.database.size_bytes / 1024)} KB`} />
+          <FactInline label="Free disk" value={h.disk.free_bytes == null ? "unavailable" : `${Math.floor(h.disk.free_bytes / 1024 / 1024)} MB`} />
+          <FactInline label="Latest backup" value={h.last_automatic_backup.name ?? "none"} />
+          <FactInline label="Backup check" value={h.last_automatic_backup.integrity.status} />
+        </div>
+        {h.last_automatic_backup.download_path && <Button variant="outline" disabled={download.isPending}
+          onClick={() => download.mutate()}><Download size={15} />{download.isPending ? "Downloading…" : "Download automatic backup"}</Button>}
+        <ErrorNote msg={download.error?.message ?? ""} />
+        <ol className="list-decimal space-y-1 pl-4 text-xs text-ink-faint">
+          {h.restore_playbook.map((step: string) => <li key={step}>{step}</li>)}
+        </ol>
+      </>}
+    </Card>
   );
 }
 
@@ -528,11 +630,6 @@ function RulesCard() {
                hint="Records older than this need your password to change"
                initial={s.edit_cutoff_hours}
                onSave={(v: number) => save("edit_cutoff_hours", v)} />
-      <NumRule label="Cash variance alert (₹)"
-               hint="Days whose drawer count differs more than this get flagged red"
-               initial={Math.round((s.variance_alert_paise ?? 0) / 100)}
-               rupees
-               onSave={(v: number) => save("variance_alert_paise", Math.round(v * 100))} />
     </Card>
   );
 }

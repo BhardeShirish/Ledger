@@ -21,8 +21,12 @@ vi.mock("react-router-dom", async () => {
 
 import DailyBrief from "./DailyBrief";
 
-function show(forecast: Record<string, unknown>) {
+function show(forecast: Record<string, unknown>, intelligence: Record<string, unknown> = {
+  health: { status: "provisional", overall_score: null, eligible_dimensions: 2 },
+  feed: [], ai: { configured: false },
+}) {
   mocks.get.mockImplementation((url: string) => {
+    if (url.startsWith("/intelligence/brief")) return Promise.resolve(intelligence);
     if (url.startsWith("/insights/forecast")) return Promise.resolve(forecast);
     if (url.startsWith("/stats/home"))
       return Promise.resolve({ outlets: [{
@@ -78,5 +82,25 @@ describe("Daily Brief month projection", () => {
            projected_rupees: 300000, target_rupees: 400000,
            percent_of_target: 75, on_track: false });
     expect(await screen.findByText("75% of target")).toBeInTheDocument();
+  });
+
+  it("shows a linked evidence-backed owner priority in the daily brief", async () => {
+    show({ month: "2026-09", has_basis: false, so_far_rupees: 0, projected_rupees: null }, {
+      health: { status: "provisional", overall_score: 62, eligible_dimensions: 5 },
+      ai: { configured: false },
+      feed: [{
+        id: "control.cash_close:2026-09-01", bucket: "act_today", kind: "risk",
+        severity: "critical", title: "Drawer has not been closed",
+        detail: "This is blocking a controlled month close.",
+        action: { label: "Review and resolve", href: "/money/cash" },
+        confidence: { level: "high", reason: "Computed from recorded Ledger facts." },
+      }],
+    });
+    expect(await screen.findByText("Drawer has not been closed")).toBeInTheDocument();
+    expect(screen.getByText("What deserves attention next")).toBeInTheDocument();
+    expect(screen.getByText("Act today")).toBeInTheDocument();
+    expect(screen.getByText("Drawer has not been closed").closest("a"))
+      .toHaveAttribute("href", "/money/cash");
+    expect(screen.getByText(/high confidence/)).toBeInTheDocument();
   });
 });

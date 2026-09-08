@@ -23,6 +23,19 @@ def test_cash_refund_reduces_expected_drawer(client, outlet_id):
     assert after["cash_losses_paise"] == 25_000
 
 
+def test_drawer_paid_other_loss_and_refund_both_reduce_expected_drawer(client, outlet_id):
+    d = today_iso()
+    before = _expected(client, outlet_id, d)["expected_paise"]
+    for kind, rupees in (("refund", 250), ("other", 75)):
+        r = client.post("/api/losses", json={
+            "outlet_id": outlet_id, "business_date": d, "kind": kind,
+            "amount_rupees": rupees, "from_drawer": True})
+        assert r.status_code == 200, r.text
+    after = _expected(client, outlet_id, d)
+    assert after["expected_paise"] == before - 32_500
+    assert after["cash_losses_paise"] == 32_500
+
+
 def test_cash_short_cannot_be_taken_from_the_drawer(client, outlet_id):
     """The whole point of the variance is to reveal a shortage; declaring one
     must not be able to cancel it."""

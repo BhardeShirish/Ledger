@@ -1,9 +1,15 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useOutletContext } from "react-router-dom";
+import {
+  createMemoryRouter, createRoutesFromElements, Link, Route, RouterProvider,
+  useOutletContext,
+} from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 
 import Layout, { GROUPS, TABS, mobileGroups, ownerOf } from "./Layout";
+import ExpensesList from "../pages/ExpensesList";
+import SalesSheet from "../pages/SalesSheet";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -16,6 +22,7 @@ vi.mock("../lib/auth", () => ({
     me: { username: "owner", role: "owner", outlet_ids: [7], full_name: "Owner" },
     logout: vi.fn(),
   }),
+  useGuarded: () => (action: () => unknown) => action(),
 }));
 vi.mock("../lib/money", () => ({
   useMoney: () => ({ config: { restaurant_name: "Test" }, refresh: mocks.refreshMoney }),
@@ -29,24 +36,37 @@ function Probe() {
   return <div>page outlet {outletId}</div>;
 }
 
-function renderLayout() {
+function ImportProbe() {
+  return <div>Sales import</div>;
+}
+
+function renderLayout(initialEntries = ["/"], initialIndex?: number, sales = false, expenses = false) {
   // Layout uses useQueryClient for the retry button on failed loads, so it
   // needs the same provider main.tsx gives it in the real app.
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-    <MemoryRouter
-      initialEntries={["/"]}
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Probe />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>
-    </QueryClientProvider>,
+  const router = createMemoryRouter(
+    createRoutesFromElements(
+      <Route element={<Layout />}>
+        <Route path="/" element={<Probe />} />
+        {sales && <Route path="/sales" element={<SalesSheet />} />}
+        {sales && <Route path="/sales/import" element={<ImportProbe />} />}
+        {expenses && <Route path="/money/expenses" element={<ExpensesList />} />}
+      </Route>,
+    ),
+    {
+      initialEntries,
+      initialIndex,
+      future: { v7_relativeSplatPath: true },
+    },
   );
+  return {
+    router,
+    ...render(
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} future={{ v7_startTransition: true }} />
+    </QueryClientProvider>,
+    ),
+  };
 }
 
 beforeEach(() => {
@@ -93,6 +113,81 @@ describe("Layout outlet resolution", () => {
     mocks.get.mockResolvedValue([{ id: 7, name: "Ootaa", is_active: true }]);
     renderLayout();
     await waitFor(() => expect(mocks.refreshMoney).toHaveBeenCalled());
+  });
+});
+
+describe("draft navigation guard", () => {
+  const mockSalesApi = () => {
+    mocks.get.mockImplementation((url: string) => {
+      if (url === "/outlets") return Promise.resolve([{ id: 7, name: "Ootaa", is_active: true }]);
+      if (url.startsWith("/sales/sheet")) {
+        return Promise.resolve({
+          rows: [{ channel_kind: "cash", manual_amount_rupees: null, effective_rupees: null }],
+          total_rupees: 0, losses_rupees: 0, losses: [], loss_kinds: [],
+        });
+      }
+      return Promise.resolve({});
+    });
+  };
+
+  it("blocks the Sales page's direct import link until its draft is discarded", async () => {
+    const user = userEvent.setup();
+    mockSalesApi();
+    localStorage.setItem("ledger_outlet", "7");
+    renderLayout(["/sales"], undefined, true);
+    const [amount] = await screen.findAllByPlaceholderText("₹");
+    await user.type(amount, "100");
+
+    await user.click(screen.getByText("Sales → Import"));
+    expect(await screen.findByText("Keep unsaved work?")).toBeInTheDocument();
+    await user.click(screen.getByText("Keep working"));
+    expect(screen.getByDisplayValue("100")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Sales → Import"));
+    await user.click(screen.getByText("Discard & continue"));
+    expect(await screen.findByText("Sales import")).toBeInTheDocument();
+  });
+
+  it("keeps a sales draft mounted when browser history navigation is cancelled", async () => {
+    const user = userEvent.setup();
+    mockSalesApi();
+    localStorage.setItem("ledger_outlet", "7");
+    const { router } = renderLayout(["/", "/sales"], 1, true);
+    const [amount] = await screen.findAllByPlaceholderText("₹");
+    await user.type(amount, "100");
+
+    void router.navigate(-1);
+    expect(await screen.findByText("Keep unsaved work?")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/sales");
+    await user.click(screen.getByText("Keep working"));
+    expect(screen.getByDisplayValue("100")).toBeInTheDocument();
+
+    void router.navigate(-1);
+    await user.click(await screen.findByText("Discard & continue"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  });
+
+  it("keeps the add-expense sheet mounted when its first amount is entered", async () => {
+    const user = userEvent.setup();
+    mocks.get.mockImplementation((url: string) => {
+      if (url === "/outlets") return Promise.resolve([{ id: 7, name: "Ootaa", is_active: true }]);
+      if (url === "/lists/categories") return Promise.resolve([
+        { id: 1, name: "Vegetables", is_active: true },
+      ]);
+      if (url === "/vendors") return Promise.resolve([]);
+      if (url.startsWith("/expenses?")) return Promise.resolve({ rows: [] });
+      if (url === "/ocr/status") return Promise.resolve({ configured: false });
+      return Promise.resolve({});
+    });
+    localStorage.setItem("ledger_outlet", "7");
+    renderLayout(["/money/expenses"], undefined, false, true);
+
+    await user.click(await screen.findByText("Add expense"));
+    const amount = await screen.findByPlaceholderText("₹ 0");
+    await user.type(amount, "1");
+
+    expect(amount).toHaveValue("1");
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
   });
 });
 

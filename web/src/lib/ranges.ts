@@ -2,6 +2,7 @@
 import { addDaysISO, todayISO } from "./format";
 
 export type Range = { start: string; end: string; label: string };
+const MAX_ANALYTICS_RANGE_DAYS = 3660;
 
 const ymd = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -58,6 +59,6 @@ export function buildPresets(): Range[] {
     { label: "This year", start: `${now.getFullYear()}-01-01`, end: t },
     { label: thisFY.label, start: thisFY.start, end: thisFY.end > t ? t : thisFY.end },
     { label: lastFY.label, start: lastFY.start, end: lastFY.end },
-    { label: "All time", start: "2020-01-01", end: t },
+    { label: "Last 10 years", start: addDaysISO(t, -(MAX_ANALYTICS_RANGE_DAYS - 1)), end: t },
   ];
 }

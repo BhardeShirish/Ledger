@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from ..audit import audit, get_setting_db, set_setting_db
 from ..db import get_db
+from ..owner_controls import owner_policy
 from ..models import Attendance, DayClosure, Employee, Expense, ExpenseCategory, Outlet, PayrollRun, Payslip, SalesDaily, SalesItem, User, Vendor
+from ..operating_evidence import menu_engineering
 from ..security import current_user, require_owner
-from ..util import days_in_month, now_local
+from ..util import analytics_date_range, days_in_month, now_local
 from .helpers import assert_outlet_access, user_outlet_ids
 from .losses import losses_paise
 
@@ -63,6 +65,15 @@ def _weekday_factors(db, outlets, upto: date, weeks: int = 8) -> dict[int, float
     return {w: mean(vs) / overall for w, vs in per_dow.items()}
 
 
+def _percentile(values: list[float], percent: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = (len(ordered) - 1) * percent
+    low, high = int(index), min(len(ordered) - 1, int(index) + 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (index - low)
+
+
 # ── Forecast + target pace ────────────────────────────────────────────────
 
 @router.get("/forecast")
@@ -102,6 +113,27 @@ def forecast(month: str | None = None, outlet_id: int | None = None,
     # Printing "₹0 projected month-end" on the 4th reads as a forecast of
     # ruin when the truth is only that this month's sales aren't in yet.
     has_basis = so_far > 0
+    history = _sales_by_day(db, outlets, t - timedelta(days=56), t - timedelta(days=1))
+    history_days = len(history)
+    coverage = len(daily_p) / days_elapsed if days_elapsed else 0
+    confidence_score = round((min(1.0, coverage) * 0.6 +
+                              min(1.0, history_days / 28) * 0.4) * 100)
+    confidence = "high" if confidence_score >= 75 else \
+        "medium" if confidence_score >= 45 else "low"
+    overall_history = mean(history.values()) if history else 0
+    residuals = [
+        amount / max(1, overall_history * factors.get(date.fromisoformat(day).weekday(), 1.0))
+        for day, amount in history.items()
+    ] if overall_history else []
+    low_factor = _percentile(residuals, 0.25) if len(residuals) >= 14 else 0.85
+    high_factor = _percentile(residuals, 0.75) if len(residuals) >= 14 else 1.15
+    scenarios = None if not has_basis else {
+        "conservative_rupees": round((so_far + projected_tail * low_factor) / 100, 2),
+        "base_rupees": round(projected / 100, 2),
+        "stretch_rupees": round((so_far + projected_tail * high_factor) / 100, 2),
+        "method": "historic weekday variation" if len(residuals) >= 14
+        else "wide default band: limited history",
+    }
 
     # target & pace
     targets = get_setting_db(db, "sales_targets", {})
@@ -120,6 +152,13 @@ def forecast(month: str | None = None, outlet_id: int | None = None,
         "projected_rupees": round(projected / 100, 2) if has_basis else None,
         "target_rupees": target,
         "outlet_id": outlets[0] if len(outlets) == 1 else None,
+        "observed_days": len(daily_p),
+        "history_days": history_days,
+        "coverage_ratio": round(coverage, 2),
+        "confidence_score": confidence_score if has_basis else 0,
+        "confidence": confidence if has_basis else "low",
+        "scenarios": scenarios,
+        "algorithm_version": "weekday-v2",
     }
     if target:
         target_paise = target * 100
@@ -131,6 +170,48 @@ def forecast(month: str | None = None, outlet_id: int | None = None,
             if has_basis else None,
         })
     return resp
+
+
+class ScenarioIn(BaseModel):
+    outlet_id: int
+    month: str
+    sales_change_percent: float = 0
+    expense_change_percent: float = 0
+    payroll_change_rupees: float = 0
+
+
+@router.post("/scenario")
+def scenario(body: ScenarioIn, user: User = Depends(require_owner),
+             db: Session = Depends(get_db)):
+    """A local, unsaved what-if over the same forecast and recorded cost base."""
+    if any(not math.isfinite(value) or abs(value) > 1000 for value in (
+        body.sales_change_percent, body.expense_change_percent, body.payroll_change_rupees,
+    )):
+        raise HTTPException(422, "Scenario values must be finite and reasonable")
+    baseline = forecast(body.month, body.outlet_id, user, db)
+    if baseline["projected_rupees"] is None:
+        raise HTTPException(422, "Record sales before running a scenario")
+    start = f"{body.month}-01"
+    year, number = map(int, body.month.split("-"))
+    end = f"{body.month}-{days_in_month(year, number):02d}"
+    expense_paise = db.query(func.coalesce(func.sum(Expense.amount_paise), 0)).filter(
+        Expense.outlet_id == body.outlet_id,
+        Expense.business_date >= start, Expense.business_date <= end).scalar()
+    payroll_paise = 0
+    run = db.query(PayrollRun).filter_by(
+        outlet_id=body.outlet_id, year=year, month=number).first()
+    if run:
+        payroll_paise = sum(s.gross_paise for s in db.query(Payslip).filter_by(run_id=run.id).all())
+    sales = baseline["projected_rupees"] * (1 + body.sales_change_percent / 100)
+    expenses = expense_paise / 100 * (1 + body.expense_change_percent / 100)
+    payroll = payroll_paise / 100 + body.payroll_change_rupees
+    return {
+        "month": body.month, "scenario_sales_rupees": round(sales, 2),
+        "scenario_expenses_rupees": round(expenses, 2),
+        "scenario_payroll_rupees": round(payroll, 2),
+        "contribution_after_recorded_costs_rupees": round(sales - expenses - payroll, 2),
+        "note": "Scenario only. It does not change the ledger and excludes unrecorded costs.",
+    }
 
 
 class TargetIn(BaseModel):
@@ -171,7 +252,7 @@ def anomalies(month: str | None = None, outlet_id: int | None = None,
     if outlet_id:
         assert_outlet_access(db, user, outlet_id)
         outlets = [outlet_id]
-    alert_paise = int(get_setting_db(db, "variance_alert_paise", 20_000))
+    alerts = {oid: owner_policy(db, oid)["cash_variance_alert_paise"] for oid in outlets}
     out = []
 
     closures = (db.query(DayClosure)
@@ -180,6 +261,7 @@ def anomalies(month: str | None = None, outlet_id: int | None = None,
                           DayClosure.business_date <= hi.isoformat(),
                           DayClosure.reopened_at.is_(None)).all())
     for c in closures:
+        alert_paise = alerts[c.outlet_id]
         if abs(c.variance_paise) > alert_paise:
             out.append({"date": c.business_date, "type": "cash_variance",
                         "severity": "high" if abs(c.variance_paise) > alert_paise * 2 else "med",
@@ -454,12 +536,13 @@ def breakeven(month: str | None = None, outlet_id: int | None = None,
 @router.get("/benchmark")
 def benchmark(start: str, end: str, user: User = Depends(current_user),
               db: Session = Depends(get_db)):
+    lo, hi = analytics_date_range(start, end)
+    start, end = lo.isoformat(), hi.isoformat()
     ids = user_outlet_ids(db, user)
     rows_out = []
     for oid in ids:
         o = db.get(Outlet, oid)
-        sales = _sales_by_day(db, [oid], date.fromisoformat(start),
-                              date.fromisoformat(end))
+        sales = _sales_by_day(db, [oid], lo, hi)
         total = sum(sales.values())
         dow_best = None
         by_dow: dict[int, int] = {}
@@ -480,7 +563,14 @@ def benchmark(start: str, end: str, user: User = Depends(current_user),
             "sales_rupees": round(total / 100, 2),
             "expenses_rupees": round(exp_q / 100, 2),
             "losses_rupees": round(loss_q / 100, 2),
-            "profit_rupees": round((total - exp_q - loss_q) / 100, 2),
+            # Payroll cannot be reliably attributed to an arbitrary range
+            # without fabricating it from the current staff master.
+            "contribution_before_payroll_rupees":
+                round((total - exp_q - loss_q) / 100, 2),
+            "profit_rupees": None,
+            "profit_known": False,
+            "profit_unknown_why":
+                "Payroll is not included in outlet benchmarks.",
             "active_days": active_days,
             "avg_active_day_rupees": round(total / 100 / max(1, active_days), 2),
             "best_weekday": dow_best,
@@ -494,6 +584,8 @@ def benchmark(start: str, end: str, user: User = Depends(current_user),
 def unit_economics(start: str, end: str, q: str | None = None,
                    outlet_id: int | None = None,
                    user: User = Depends(current_user), db: Session = Depends(get_db)):
+    lo, hi = analytics_date_range(start, end)
+    start, end = lo.isoformat(), hi.isoformat()
     ids = user_outlet_ids(db, user)
     qry = (db.query(Expense)
              .filter(Expense.outlet_id.in_(ids),
@@ -542,9 +634,24 @@ def unit_economics(start: str, end: str, q: str | None = None,
 
 # ── Menu item analytics ───────────────────────────────────────────────────
 
+@router.get("/menu-engineering")
+def menu_engineering_analysis(start: str, end: str, outlet_id: int | None = None,
+                              user: User = Depends(current_user),
+                              db: Session = Depends(get_db)):
+    """Popularity and food-cost signals, strictly limited to complete recipe evidence."""
+    lo, hi = analytics_date_range(start, end)
+    outlet_ids = user_outlet_ids(db, user)
+    if outlet_id is not None:
+        assert_outlet_access(db, user, outlet_id)
+        outlet_ids = [outlet_id]
+    return menu_engineering(db, outlet_ids, lo, hi)
+
+
 @router.get("/items")
 def item_analytics(start: str, end: str, outlet_id: int | None = None,
                    user: User = Depends(current_user), db: Session = Depends(get_db)):
+    lo, hi = analytics_date_range(start, end)
+    start, end = lo.isoformat(), hi.isoformat()
     ids = user_outlet_ids(db, user)
     qry = (db.query(SalesItem)
              .filter(SalesItem.outlet_id.in_(ids),
@@ -562,10 +669,9 @@ def item_analytics(start: str, end: str, outlet_id: int | None = None,
         a["qty"] += r.qty
         a["revenue_paise"] += r.amount_paise
         a["days_sold"].add(r.business_date)
-    span_days = max(1, (date.fromisoformat(end) -
-                        date.fromisoformat(start)).days + 1)
+    span_days = (hi - lo).days + 1
     top = sorted(agg.values(), key=lambda x: -x["revenue_paise"])
-    dead_cutoff = (date.fromisoformat(start) - timedelta(days=14)).isoformat()
+    dead_cutoff = (lo - timedelta(days=14)).isoformat()
 
     def ever_sold_before(name):
         return db.query(SalesItem.id).filter(

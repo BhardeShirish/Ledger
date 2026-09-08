@@ -69,6 +69,37 @@ def parse_date(s: str | None) -> date | None:
         return None
 
 
+def validate_business_date(value: str, *, label: str = "Business date",
+                           no_future: bool = False) -> date:
+    """Return a strict ISO business date or a user-facing validation error."""
+    if not isinstance(value, str) or len(value) != 10:
+        raise HTTPException(422, f"{label} must be a valid YYYY-MM-DD date.")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(422, f"{label} must be a valid YYYY-MM-DD date.")
+    if parsed.isoformat() != value:
+        raise HTTPException(422, f"{label} must be a valid YYYY-MM-DD date.")
+    if no_future and parsed > now_local().date():
+        raise HTTPException(422, f"{label} cannot be in the future.")
+    return parsed
+
+
+def analytics_date_range(start: str, end: str, *, max_days: int = 3660) -> tuple[date, date]:
+    """Validate an inclusive analytics range, capped at ten years.
+
+    The cap includes leap-year allowance and keeps every analytics query,
+    including daily series and its totals, on the same complete range.
+    """
+    lo = validate_business_date(start, label="Start date")
+    hi = validate_business_date(end, label="End date")
+    if hi < lo:
+        raise HTTPException(422, "End date must not be before start date.")
+    if (hi - lo).days + 1 > max_days:
+        raise HTTPException(422, f"Analytics date ranges may not exceed {max_days} days.")
+    return lo, hi
+
+
 def month_bounds(year: int, month: int) -> tuple[date, date]:
     start = date(year, month, 1)
     end = date(year + (month == 12), (month % 12) + 1, 1) - timedelta(days=1)

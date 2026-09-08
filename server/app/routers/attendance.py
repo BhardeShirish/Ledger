@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..audit import audit, check_edit_window
 from ..attendance_lib import absent_days, credited_days_x10, derive_times, resolve_shift
 from ..db import get_db
+from ..periods import assert_month_open
 from ..models import Attendance, Employee, ShiftPattern, User
 from ..security import current_user
 from .helpers import assert_outlet_access
@@ -162,6 +163,7 @@ def mark(body: MarkIn, user: User = Depends(current_user), db: Session = Depends
         raise HTTPException(404, "Employee not found")
     assert_outlet_access(db, user, emp.outlet_id)
     check_edit_window(body.date, user, db, no_future=True)
+    assert_month_open(db, emp.outlet_id, body.date)
     d = date.fromisoformat(body.date)
     shift = resolve_shift(db, emp, d)
     # MarkIn extends EntryIn, so hand it over whole. Rebuilding it field by
@@ -177,6 +179,7 @@ def mark(body: MarkIn, user: User = Depends(current_user), db: Session = Depends
 def bulk(body: BulkIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
     check_edit_window(body.date, user, db, no_future=True)
+    assert_month_open(db, body.outlet_id, body.date)
     emps = (db.query(Employee)
               .filter(Employee.outlet_id == body.outlet_id,
                       Employee.working_status != "left",

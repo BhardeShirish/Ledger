@@ -17,11 +17,12 @@ from .config import DATA_DIR, ensure_dirs  # noqa: E402
 from .backup import run_daily_backup  # noqa: E402
 from .db import Base, SessionLocal, engine  # noqa: E402
 from .models import migrate  # noqa: E402
-from .routers import (advances, admin, advisor, attendance, auth, bank, dataio,
+from .routers import (advances, admin, advisor, attendance, auth, bank, control, dataio,
                       dayclose, expenses, imports, insights, inventory, lists,
-                      losses, ocr, outlets, patterns, payroll, pnl, recurring, reports,
+                      intelligence, losses, ocr, outlets, patterns, payroll, pnl, recurring, reports,
                       sales,
                       stats, staff, uploads, users, vendors)
+from .routers import purchases, owner
 from .seed import bootstrap, demo_seed  # noqa: E402
 
 LOG_FILE = DATA_DIR / "server.log"
@@ -145,9 +146,10 @@ WEB_DIST = Path(os.environ.get("LEDGER_WEB_DIST", ""))  # set by the launcher
 API_PREFIX = "/api"
 for mod in (auth, users, outlets, staff, attendance, dayclose, expenses,
             vendors, advances, sales, imports, payroll, lists, stats,
-            insights, inventory, reports, admin, uploads, dataio, ocr, bank,
-            losses, advisor, patterns, pnl, recurring):
+            insights, inventory, reports, admin, uploads, dataio, ocr, bank, control,
+            losses, advisor, patterns, pnl, recurring, intelligence, owner):
     app.include_router(mod.router, prefix=API_PREFIX)
+app.include_router(purchases.router, prefix=API_PREFIX)
 
 
 @app.get("/api/health")

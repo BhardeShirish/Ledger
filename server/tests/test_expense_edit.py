@@ -118,3 +118,20 @@ def test_a_new_expense_defaults_to_upi(client, outlet_id):
         "description": "no mode given"})
     assert r.status_code == 201, r.text
     assert r.json()["mode"] == "upi"
+
+
+def test_expense_create_and_update_reject_malformed_and_future_dates(client, outlet_id):
+    cat_id, vendor_id = _setup(client, outlet_id)
+    base = {"outlet_id": outlet_id, "category_id": cat_id, "vendor_id": vendor_id,
+            "amount_rupees": 100, "mode": "upi"}
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    for business_date in ("not-a-date", tomorrow):
+        r = client.post("/api/expenses", json={**base, "business_date": business_date})
+        assert r.status_code == 422, r.text
+        assert "date" in r.json()["detail"].lower()
+    expense = _buy(client, outlet_id, cat_id, vendor_id, "Date Edit Rice", 1, 100)
+    for business_date in ("not-a-date", tomorrow):
+        r = client.patch(f"/api/expenses/{expense['id']}",
+                         json={"business_date": business_date})
+        assert r.status_code == 422, r.text
+        assert "date" in r.json()["detail"].lower()

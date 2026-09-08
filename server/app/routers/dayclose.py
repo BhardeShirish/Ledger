@@ -4,13 +4,16 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..audit import audit, check_edit_window, get_setting_db
-from ..config import DEFAULT_VARIANCE_ALERT_PAISE
+from ..audit import audit, check_edit_window
+from ..owner_controls import owner_policy
 from ..db import get_db
-from ..models import (Advance, DayClosure, Employee, Expense, SalesDaily, User)
+from ..periods import assert_month_open
+from ..models import (Advance, CashBankMatch, DayClosure, Employee, Expense, SalesDaily, User)
 from ..security import current_user
+from ..util import validate_business_date
 from .helpers import assert_outlet_access
 
 router = APIRouter(prefix="/cash", tags=["cash"])
@@ -112,8 +115,8 @@ def expected_breakdown(db: Session, outlet_id: int, d: str) -> dict:
         "cash_losses_paise": losses,
         "split_unknown_paise": split_unknown,
         "expected_paise": expected,
-        "variance_alert_paise": int(get_setting_db(
-            db, "variance_alert_paise", DEFAULT_VARIANCE_ALERT_PAISE)),
+        "variance_alert_paise": int(owner_policy(
+            db, outlet_id)["cash_variance_alert_paise"]),
     }
 
 
@@ -148,7 +151,9 @@ def day(outlet_id: int, date: str, user: User = Depends(current_user),
 @router.post("/close")
 def close(body: CloseIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
+    validate_business_date(body.date, label="Cash-close date", no_future=True)
     check_edit_window(body.date, user, db)
+    assert_month_open(db, body.outlet_id, body.date)
     if (
         not math.isfinite(body.counted_rupees)
         or not math.isfinite(body.taken_home_rupees)
@@ -174,10 +179,19 @@ def close(body: CloseIn, user: User = Depends(current_user), db: Session = Depen
     if row is None:
         row = DayClosure(outlet_id=body.outlet_id, business_date=body.date)
         db.add(row)
+    moved_to_bank = int(round(body.taken_home_rupees * 100))
+    matched_to_bank = (db.query(func.coalesce(func.sum(CashBankMatch.amount_paise), 0))
+                         .filter(CashBankMatch.closure_id == row.id).scalar())
+    if moved_to_bank < matched_to_bank:
+        raise HTTPException(
+            409,
+            "Cash already reconciled to bank cannot exceed the revised amount. "
+            "Remove or reallocate the reconciliation first.",
+        )
     row.expected_cash_paise = exp["expected_paise"]
     row.counted_cash_paise = counted
     row.variance_paise = counted - exp["expected_paise"]
-    row.moved_to_bank_paise = int(round(body.taken_home_rupees * 100))
+    row.moved_to_bank_paise = moved_to_bank
     row.counted_breakdown = body.breakdown
     row.note = body.note
     row.reopened_at = None
@@ -200,6 +214,7 @@ def reopen(closure_id: int, user: User = Depends(current_user), db: Session = De
         raise HTTPException(404, "Closure not found")
     assert_outlet_access(db, user, row.outlet_id)
     check_edit_window(row.business_date, user, db)
+    assert_month_open(db, row.outlet_id, row.business_date)
     if row.business_date != __import__("app.util", fromlist=["today_iso"]).today_iso() \
             and user.role != "owner":
         raise HTTPException(403, "Only the owner can reopen past days")
@@ -218,7 +233,7 @@ def closures(outlet_id: int, limit: int = 31,
     rows = (db.query(DayClosure)
               .filter_by(outlet_id=outlet_id)
               .order_by(DayClosure.business_date.desc()).limit(limit).all())
-    alert = int(get_setting_db(db, "variance_alert_paise", DEFAULT_VARIANCE_ALERT_PAISE))
+    alert = int(owner_policy(db, outlet_id)["cash_variance_alert_paise"])
     return {"alert_paise": alert, "rows": [_serialize(r) for r in rows]}
 
 

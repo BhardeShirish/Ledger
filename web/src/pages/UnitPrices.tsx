@@ -21,10 +21,15 @@ export default function UnitPrices() {
     d.setMonth(d.getMonth() - monthOffset + 1); // include current
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }, [monthOffset]);
+  const periodEnd = useMemo(() => {
+    const [year, month] = period.split("-").map(Number);
+    const last = new Date(year, month, 0).getDate();
+    return `${period}-${String(last).padStart(2, "0")}`;
+  }, [period]);
 
   const q = useQuery({
     queryKey: ["unit-econ", period, outletId],
-    queryFn: () => api.get(`/insights/unit-economics?start=${period}-01&end=${period}-31&outlet_id=${outletId}`),
+    queryFn: () => api.get(`/insights/unit-economics?start=${period}-01&end=${periodEnd}&outlet_id=${outletId}`),
   });
 
   if (q.isLoading) return <Spinner />;
@@ -49,7 +54,7 @@ export default function UnitPrices() {
                   aria-label="Next month"
                   onClick={() => setMonthOffset(monthOffset + 1)}>›</Button>
           <ExportButton entity="unit_economics"
-                        params={{ outlet_id: outletId, start: `${period}-01`, end: `${period}-31` }} />
+                        params={{ outlet_id: outletId, start: `${period}-01`, end: periodEnd }} />
         </div>
       </header>
 

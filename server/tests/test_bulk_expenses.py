@@ -98,3 +98,13 @@ def test_bulk_rejects_old_dates_for_manager(manager, outlet_id):
         "category_id": 1, "mode": "cash",
         "lines": [{"item_name": "X", "amount_rupees": 50}]})
     assert r.status_code == 403
+
+
+def test_bulk_expenses_reject_malformed_and_future_business_dates(client, outlet_id):
+    cats = client.get("/api/lists/categories").json()
+    base = {"outlet_id": outlet_id, "category_id": cats[0]["id"],
+            "lines": [{"item_name": "X", "amount_rupees": 50}]}
+    for business_date in ("not-a-date", (date.today() + timedelta(days=1)).isoformat()):
+        r = client.post("/api/expenses/bulk", json={**base, "business_date": business_date})
+        assert r.status_code == 422, r.text
+        assert "date" in r.json()["detail"].lower()

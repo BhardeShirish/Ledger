@@ -31,7 +31,7 @@ from ..costgroups import (
     BAND_LABELS, BANDS_DEFAULT, COGS_GROUPS, GROUPS, PRIME_GROUPS,
 )
 from ..db import get_db
-from ..models import Employee, Expense, ExpenseCategory, SalesBill, User
+from ..models import Employee, Expense, ExpenseCategory, SalesBill, SalesDaily, User
 from ..security import current_user, require_stepup
 from .advisor import by_severity
 from .insights import _today as _today_date
@@ -131,19 +131,70 @@ def _spend_by_group(db: Session, outlets: list[int], lo: str, hi: str) -> dict:
 
 
 def _sales(db: Session, outlets: list[int], lo: str, hi: str) -> dict:
+    """Effective sales without treating a manual daily total as a bill.
+
+    POS rollups win per outlet/day/channel.  Legacy bill-only imports remain
+    useful when a matching rollup is absent; otherwise counting both would
+    report each POS sale twice.
+    """
     bills = (db.query(SalesBill)
                .filter(SalesBill.outlet_id.in_(outlets),
                        SalesBill.business_date >= lo,
                        SalesBill.business_date <= hi).all())
-    net = sum(b.net_paise or 0 for b in bills)
-    total = sum(b.total_paise or 0 for b in bills)
-    days = len({b.business_date for b in bills})
+    daily = (db.query(SalesDaily)
+               .filter(SalesDaily.outlet_id.in_(outlets),
+                       SalesDaily.business_date >= lo,
+                       SalesDaily.business_date <= hi).all())
+
+    # Each source is first reduced to a channel/day key before precedence.
+    bill_totals: dict[tuple[int, str, str], dict[str, int]] = {}
+    for b in bills:
+        slot = bill_totals.setdefault((b.outlet_id, b.business_date, b.channel_kind),
+                                      {"net": 0, "total": 0, "bills": 0})
+        slot["net"] += b.net_paise or 0
+        slot["total"] += b.total_paise or 0
+        slot["bills"] += 1
+    pos_totals: dict[tuple[int, str, str], dict[str, int]] = {}
+    manual_totals: dict[tuple[int, str, str], dict[str, int]] = {}
+    for row in daily:
+        target = pos_totals if row.source == "petpooja" else manual_totals
+        slot = target.setdefault((row.outlet_id, row.business_date, row.channel_kind),
+                                 {"net": 0, "total": 0, "bills": 0})
+        if row.source == "petpooja":
+            slot["net"] += row.net_paise or 0
+            slot["total"] += row.total_paise or 0
+            slot["bills"] += row.bills or 0
+        else:
+            amount = row.amount_paise or 0
+            slot["net"] += amount
+            slot["total"] += amount
+
+    net = total = 0
+    bill_count = 0
+    manual_only_sales = False
+    open_days: set[str] = set()
+    for key in set(bill_totals) | set(pos_totals) | set(manual_totals):
+        # Petpooja's aggregate is authoritative, then a legacy bill import,
+        # then the owner's one-number manual total.
+        chosen = (pos_totals.get(key) or bill_totals.get(key)
+                  or manual_totals[key])
+        net += chosen["net"]
+        total += chosen["total"]
+        if key in manual_totals and key not in pos_totals and key not in bill_totals:
+            manual_only_sales = manual_only_sales or chosen["total"] > 0
+        if chosen["total"] > 0:
+            open_days.add(key[1])
+        bill_count += chosen["bills"]
+    bills_known = not manual_only_sales
     return {
         "net_paise": net, "total_paise": total,
         "tax_paise": max(total - net, 0),
-        "bills": len(bills), "days_open": days,
+        "bills": bill_count if bills_known else None,
+        "bill_metrics_available": bills_known,
+        "days_open": len(open_days),
         "net_rupees": _rupees(net), "total_rupees": _rupees(total),
-        "avg_ticket_net_rupees": _rupees(net / len(bills)) if bills else 0.0,
+        "avg_ticket_net_rupees": _rupees(net / bill_count)
+        if bills_known and bill_count else None,
     }
 
 
@@ -367,6 +418,10 @@ def summary(month: str | None = None, outlet_id: int | None = None,
 def _per_bill(sales: dict, total_cost: int, cogs: int, *,
               complete: bool, cogs_ok: bool) -> dict:
     n = sales["bills"]
+    if n is None:
+        return {"bills": None, "cost_rupees": None, "profit_rupees": None,
+                "contribution_rupees": None, "net_rupees": None,
+                "food_cost_rupees": None}
     if not n:
         return {"bills": 0, "cost_rupees": None, "profit_rupees": None,
                 "contribution_rupees": None, "net_rupees": None,
@@ -398,7 +453,12 @@ def _breakeven(sales: dict, variable: int, fixed: int,
     Indian restaurant on monthly wages actually behaves.
     """
     net = sales["net_paise"]
-    if not net or not sales["bills"]:
+    if not net:
+        return {"possible": False, "why": "No sales in this period yet."}
+    if sales["bills"] is None:
+        return {"possible": False,
+                "why": "Break-even needs POS bill counts; manual daily totals do not include them."}
+    if not sales["bills"]:
         return {"possible": False, "why": "No sales in this period yet."}
     if not complete:
         # Break-even from fixed costs nobody entered is the most dangerous
@@ -537,7 +597,7 @@ def _quality(groups: dict, pay: dict, staff_meals: dict, sales: dict) -> dict:
         "staff_meals_in_food_rupees": _rupees(staff_meals["paise"]),
         "staff_meal_entries": staff_meals["entries"],
         "possible_double_counted_salary": salary_cats,
-        "has_sales": sales["bills"] > 0,
+        "has_sales": sales["total_paise"] > 0,
         # Two gates that decide what this page is allowed to conclude.
         # A profit figure computed from costs nobody logged is not a
         # cautious estimate, it is a lie that reads as good news.
@@ -553,7 +613,7 @@ def _findings(f: dict) -> list[dict]:
         out.append({"severity": sev, "title": title, "detail": detail})
 
     sales = f["sales"]
-    if not sales["bills"]:
+    if not sales["total_paise"]:
         add("info", "No sales recorded this month",
             "Import or enter sales and the whole P&L fills in by itself.")
         return by_severity(out)

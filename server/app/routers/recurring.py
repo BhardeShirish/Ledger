@@ -16,6 +16,7 @@ post impossible even if two requests race.
 from __future__ import annotations
 
 import calendar
+import math
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,8 +24,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Expense, ExpenseCategory, RecurringCost, User, Vendor
+from ..audit import audit
+from ..models import Expense, ExpenseCategory, RecurringCost, User, Vendor, utcnow
+from ..owner_controls import recurring_review_signal
+from ..periods import assert_month_open
 from ..security import current_user, require_owner
+from .helpers import assert_outlet_access, user_outlet_ids
 from .insights import _today
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
@@ -43,6 +48,7 @@ class RecurringIn(BaseModel):
     mode: str = "bank"
     note: str = ""
     outlet_id: int | None = None
+    review_cadence_days: int = Field(default=90, ge=1, le=366)
 
 
 def _month_key(iso_month: str) -> tuple[int, int]:
@@ -106,6 +112,12 @@ def post_due(db: Session, *, upto: str | None = None) -> int:
                               Expense.idempotency_key == key).first())
             if seen:
                 continue
+            try:
+                assert_month_open(db, r.outlet_id, when)
+            except HTTPException as exc:
+                if exc.status_code == 423:
+                    continue
+                raise
             db.add(Expense(
                 outlet_id=r.outlet_id, business_date=when,
                 category_id=r.category_id, vendor_id=r.vendor_id,
@@ -131,6 +143,7 @@ def _shape(db: Session, r: RecurringCost) -> dict:
         "vendor": ven.name if ven else "", "mode": r.mode, "note": r.note,
         "is_active": r.is_active,
         "yearly_rupees": round(r.amount_paise * 12 / 100, 2),
+        **recurring_review_signal(r, _today()),
     }
 
 
@@ -138,7 +151,9 @@ def _shape(db: Session, r: RecurringCost) -> dict:
 def list_recurring(user: User = Depends(current_user),
                    db: Session = Depends(get_db)):
     post_due(db)
-    rows = db.query(RecurringCost).order_by(RecurringCost.id).all()
+    rows = (db.query(RecurringCost)
+              .filter(RecurringCost.outlet_id.in_(user_outlet_ids(db, user)))
+              .order_by(RecurringCost.id).all())
     active = [r for r in rows if r.is_active]
     return {
         "items": [_shape(db, r) for r in rows],
@@ -157,7 +172,7 @@ def _check(db: Session, body: RecurringIn) -> None:
             raise HTTPException(422, "The end month is before the start month.")
     if db.get(ExpenseCategory, body.category_id) is None:
         raise HTTPException(422, "Pick a category that exists.")
-    if round(body.amount_rupees * 100) <= 0:
+    if not math.isfinite(body.amount_rupees) or round(body.amount_rupees * 100) <= 0:
         raise HTTPException(422, "Give the amount.")
 
 
@@ -165,13 +180,19 @@ def _check(db: Session, body: RecurringIn) -> None:
 def add_recurring(body: RecurringIn, user: User = Depends(require_owner),
                   db: Session = Depends(get_db)):
     _check(db, body)
+    outlet_id = body.outlet_id or 1
+    assert_outlet_access(db, user, outlet_id)
     r = RecurringCost(
-        outlet_id=body.outlet_id or 1, category_id=body.category_id,
+        outlet_id=outlet_id, category_id=body.category_id,
         name=body.name.strip(), amount_paise=round(body.amount_rupees * 100),
         day_of_month=body.day_of_month, start_month=body.start_month,
         end_month=(body.end_month or None), vendor_id=body.vendor_id,
-        mode=body.mode, note=body.note, is_active=True)
+        mode=body.mode, note=body.note, is_active=True,
+        review_cadence_days=body.review_cadence_days)
     db.add(r)
+    db.flush()
+    audit(db, None, user.id, "create", "recurring_cost", r.id,
+          after={"outlet_id": r.outlet_id, "review_cadence_days": r.review_cadence_days})
     db.commit()
     posted = post_due(db)
     return {**_shape(db, r), "posted_now": posted}
@@ -184,6 +205,7 @@ def edit_recurring(cost_id: int, body: RecurringIn,
     r = db.get(RecurringCost, cost_id)
     if r is None:
         raise HTTPException(404, "Not found")
+    assert_outlet_access(db, user, r.outlet_id)
     _check(db, body)
     r.category_id = body.category_id
     r.name = body.name.strip()
@@ -194,6 +216,9 @@ def edit_recurring(cost_id: int, body: RecurringIn,
     r.vendor_id = body.vendor_id
     r.mode = body.mode
     r.note = body.note
+    r.review_cadence_days = body.review_cadence_days
+    audit(db, None, user.id, "update", "recurring_cost", r.id,
+          after={"review_cadence_days": r.review_cadence_days})
     db.commit()
     # Changing the amount must not rewrite months already posted and
     # possibly already reconciled against a bank statement. A correction to
@@ -208,9 +233,25 @@ def stop_recurring(cost_id: int, user: User = Depends(require_owner),
     r = db.get(RecurringCost, cost_id)
     if r is None:
         raise HTTPException(404, "Not found")
+    assert_outlet_access(db, user, r.outlet_id)
     # Stopping a standing cost leaves the months it already posted alone:
     # the rent for March was really paid, and deleting it would silently
     # improve a month that is already closed.
     r.is_active = False
+    audit(db, None, user.id, "deactivate", "recurring_cost", r.id)
     db.commit()
     return {"ok": True, "kept_past_entries": True}
+
+
+@router.post("/{cost_id}/review")
+def review_recurring(cost_id: int, user: User = Depends(require_owner),
+                     db: Session = Depends(get_db)):
+    """Record an owner review only; it never creates or rewrites an expense."""
+    r = db.get(RecurringCost, cost_id)
+    if r is None:
+        raise HTTPException(404, "Not found")
+    assert_outlet_access(db, user, r.outlet_id)
+    r.last_owner_review_at = utcnow()
+    audit(db, None, user.id, "review", "recurring_cost", r.id)
+    db.commit()
+    return _shape(db, r)

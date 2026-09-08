@@ -162,6 +162,14 @@ def migrate(db_engine) -> None:
                 "VARCHAR(16) NOT NULL DEFAULT 'operating'"
             ),
         }),
+        (8, "recurring_costs", {
+            "last_owner_review_at": (
+            "ALTER TABLE recurring_costs ADD COLUMN last_owner_review_at DATETIME"
+            ),
+            "review_cadence_days": (
+            "ALTER TABLE recurring_costs ADD COLUMN review_cadence_days INTEGER NOT NULL DEFAULT 90"
+            ),
+        }),
     ]
     with db_engine.begin() as conn:
         conn.execute(text(
@@ -336,6 +344,8 @@ class RecurringCost(Base):
     mode: Mapped[str] = mapped_column(String(12), default="bank")
     note: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(default=True)
+    last_owner_review_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_cadence_days: Mapped[int] = mapped_column(Integer, default=90)
 
 
 class Expense(Base, Timestamped):
@@ -402,6 +412,65 @@ class VendorEntry(Base):
     receipt_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     entered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class PurchaseOrder(Base, Timestamped):
+    """A supplier commitment. It is intentionally not a financial fact."""
+    __tablename__ = "purchase_orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outlet_id: Mapped[int] = mapped_column(ForeignKey("outlets.id"), index=True)
+    vendor_id: Mapped[int] = mapped_column(ForeignKey("vendors.id"))
+    category_id: Mapped[int] = mapped_column(ForeignKey("expense_categories.id"))
+    payment_mode: Mapped[str] = mapped_column(String(8), default="credit")
+    expected_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(12), default="draft")
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PurchaseOrderLine(Base):
+    __tablename__ = "purchase_order_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), index=True)
+    item_name: Mapped[str] = mapped_column(String(120))
+    item_key: Mapped[str] = mapped_column(String(120))
+    ordered_quantity: Mapped[float] = mapped_column(Float, default=0)
+    unit: Mapped[str] = mapped_column(String(16))
+    planned_unit_cost_paise: Mapped[int] = mapped_column(Integer, default=0)
+    __table_args__ = (UniqueConstraint("purchase_order_id", "item_key"),)
+
+
+class PurchaseReceipt(Base, Timestamped):
+    """The single receiving record for an order; only finalization posts books."""
+    __tablename__ = "purchase_receipts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id"), unique=True, index=True)
+    business_date: Mapped[str] = mapped_column(String(10), index=True)
+    status: Mapped[str] = mapped_column(String(12), default="draft")
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    finalized_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PurchaseReceiptLine(Base):
+    __tablename__ = "purchase_receipt_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    purchase_receipt_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_receipts.id", ondelete="CASCADE"), index=True)
+    purchase_order_line_id: Mapped[int] = mapped_column(ForeignKey("purchase_order_lines.id"))
+    received_quantity: Mapped[float] = mapped_column(Float, default=0)
+    unit: Mapped[str] = mapped_column(String(16))
+    unit_price_paise: Mapped[int] = mapped_column(Integer, default=0)
+    expense_id: Mapped[int | None] = mapped_column(ForeignKey("expenses.id"), unique=True, nullable=True)
+    __table_args__ = (UniqueConstraint("purchase_receipt_id", "purchase_order_line_id"),)
 
 
 # ── Money in ──────────────────────────────────────────────────────────────
@@ -665,9 +734,54 @@ class MonthLock(Base):
     __table_args__ = (UniqueConstraint("outlet_id", "year", "month"),)
 
 
+class BankCredit(Base):
+    """A statement credit retained only for cash-deposit reconciliation."""
+    __tablename__ = "bank_credits"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outlet_id: Mapped[int] = mapped_column(ForeignKey("outlets.id"))
+    business_date: Mapped[str] = mapped_column(String(10), index=True)
+    amount_paise: Mapped[int] = mapped_column(Integer)
+    narration: Mapped[str] = mapped_column(Text, default="")
+    reference: Mapped[str] = mapped_column(String(120), default="")
+    line_hash: Mapped[str] = mapped_column(String(64))
+    import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint("outlet_id", "line_hash"),)
+
+
+class CashBankMatch(Base):
+    """An owner-confirmed allocation between a cash close and bank credit."""
+    __tablename__ = "cash_bank_matches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    closure_id: Mapped[int] = mapped_column(ForeignKey("day_closures.id"))
+    bank_credit_id: Mapped[int] = mapped_column(ForeignKey("bank_credits.id"))
+    amount_paise: Mapped[int] = mapped_column(Integer)
+    matched_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    matched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint("closure_id", "bank_credit_id"),)
+
+
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class FindingResolution(Base):
+    """An owner decision about one deterministic finding in one evidence period."""
+    __tablename__ = "finding_resolutions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outlet_id: Mapped[int] = mapped_column(ForeignKey("outlets.id"), index=True)
+    finding_id: Mapped[str] = mapped_column(String(160))
+    covered_period: Mapped[str] = mapped_column(String(32))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("outlet_id", "finding_id", "covered_period"),
+        Index("ix_finding_resolution_fingerprint", "outlet_id", "fingerprint"),
+    )

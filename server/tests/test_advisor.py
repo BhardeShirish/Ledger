@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.db import SessionLocal
-from app.models import Employee, Expense, ExpenseCategory, SalesDaily
+from app.models import DayClosure, Employee, Expense, ExpenseCategory, SalesDaily
 
 
 def _month_start(back: int) -> date:
@@ -199,7 +199,9 @@ def test_says_so_rather_than_inventing_a_trend(client):
     assert "Too early to compare months" in _titles(d)
     # no percentage change invented off a baseline nobody wrote down
     assert "was 0.0% last month" not in str(d["findings"])
-    assert not [f for f in d["findings"] if f["severity"] in ("act", "watch")], \
+    assert not [f for f in d["findings"]
+                if f["severity"] in ("act", "watch")
+                and f["title"] != "Cash closure missing on sales days"], \
         _titles(d)
 
 
@@ -229,6 +231,49 @@ def test_running_month_compares_like_for_like(client):
     assert span == prev_span
 
 
+def test_review_reports_aggregate_recording_coverage_and_missing_cash_closure(client):
+    with SessionLocal() as db:
+        _sales(db, CUR + timedelta(days=1), 20000)
+        _sales(db, CUR + timedelta(days=2), 20000)
+        _sales(db, CUR + timedelta(days=3), 0)  # an explicitly cleared manual entry
+        _exp(db, CUR + timedelta(days=1), "Vegetables", 500)
+        db.add(DayClosure(outlet_id=1, business_date=(CUR + timedelta(days=1)).isoformat(),
+                          expected_cash_paise=0, counted_cash_paise=0,
+                          variance_paise=0, moved_to_bank_paise=0))
+        db.commit()
+    d = _review(client, CUR)
+    coverage = d["recording_coverage"]
+    assert coverage == {
+        "sales_days": 2, "expense_days": 1,
+        "cash_closed_among_sales_days": 1, "cash_open_among_sales_days": 1,
+    }
+    assert d["findings"][0]["title"] == "Cash closure missing on sales days"
+
+
+def test_recording_coverage_matches_cash_closes_to_the_same_outlet(client):
+    other = client.post("/api/outlets", json={"name": "Second outlet"}).json()
+    business_date = (CUR + timedelta(days=1)).isoformat()
+    with SessionLocal() as db:
+        _sales(db, CUR + timedelta(days=1), 20000)
+        db.add(SalesDaily(
+            outlet_id=other["id"], business_date=business_date,
+            channel_kind="cash", source="manual", amount_paise=200000,
+        ))
+        db.add(DayClosure(
+            outlet_id=1, business_date=business_date,
+            expected_cash_paise=0, counted_cash_paise=0,
+            variance_paise=0, moved_to_bank_paise=0,
+        ))
+        db.commit()
+
+    review = client.get("/api/advisor/review", params={"month": CUR.strftime("%Y-%m")})
+    assert review.status_code == 200, review.text
+    assert review.json()["recording_coverage"] == {
+        "sales_days": 2, "expense_days": 0,
+        "cash_closed_among_sales_days": 1, "cash_open_among_sales_days": 1,
+    }
+
+
 # ── the AI layer ────────────────────────────────────────────────────────────
 
 def test_advice_refuses_politely_when_ai_is_not_set_up(books):
@@ -249,6 +294,16 @@ def test_nothing_identifying_is_sent_to_the_model(books):
     payload = _slim(facts)
     assert "Newly Joined" not in str(payload)
     assert payload["staff"]["joined"] == 1
+    assert "Vegetables" not in str(payload)
+    assert "Rice" not in str(payload)
+    assert payload["recording_coverage"]["sales_days"] == 10
+    topics = {finding["topic"] for finding in payload["finding_severities"]}
+    assert topics <= {
+        "cash_control", "cost_control", "staffing", "bookkeeping",
+        "business_review",
+    }
+    assert "Vegetables" not in str(payload["finding_severities"])
+    assert "Newly Joined" not in str(payload["finding_severities"])
 
 
 def _configure_ai(c):
@@ -283,21 +338,25 @@ def test_advice_sends_the_figures_and_returns_the_words(books, monkeypatch):
         seen["url"] = url
         seen["body"] = json
         seen["headers"] = headers
-        return _Reply("Vegetables cost you ₹8,400 more. Get a second quote.")
+        return _Reply(
+            '{"finding_indexes":[0,0,1,2,3],'
+            '"commentary":"Review the selected local findings and act promptly."}')
 
     monkeypatch.setattr("app.routers.advisor.httpx.post", fake_post)
 
     r = books.post("/api/advisor/advice", json={"month": CUR.strftime("%Y-%m"),
                                                 "outlet_id": 1})
     assert r.status_code == 200, r.text
-    assert "second quote" in r.json()["text"]
+    assert "selected local findings" in r.json()["text"]
     assert r.json()["model"] == "gemini-2.0-flash"
     assert r.json()["findings"], "the deterministic findings ride along too"
+    assert r.json()["selected_finding_indexes"] == [0, 1, 2]
 
     assert seen["url"].endswith("/chat/completions")
     assert seen["body"]["model"] == "gemini-2.0-flash"
     sent = str(seen["body"])
-    assert "Vegetables" in sent and "Newly Joined" not in sent
+    assert "Vegetables" not in sent and "Newly Joined" not in sent
+    assert "recording_coverage" in sent
     assert "test-key-123" not in sent, "the key must travel as a header, not a prompt"
 
 
@@ -322,4 +381,17 @@ def test_advice_rejects_an_empty_answer(books, monkeypatch):
                         lambda *a, **k: _Reply("   "))
     r = books.post("/api/advisor/advice", json={"month": CUR.strftime("%Y-%m")})
     assert r.status_code == 502
-    assert "empty" in r.json()["detail"].lower()
+    assert "json" in r.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("reply", [
+    "not-json",
+    '{"finding_indexes":[999],"commentary":"Review the selected finding."}',
+    '{"finding_indexes":[0],"commentary":"Save 20 percent today."}',
+])
+def test_advice_rejects_malformed_or_invalid_model_output(books, monkeypatch, reply):
+    _configure_ai(books)
+    monkeypatch.setattr("app.routers.advisor.httpx.post",
+                        lambda *a, **k: _Reply(reply))
+    r = books.post("/api/advisor/advice", json={"month": CUR.strftime("%Y-%m")})
+    assert r.status_code == 502, r.text

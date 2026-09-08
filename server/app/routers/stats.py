@@ -4,16 +4,39 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..audit import get_setting_db
 from ..db import get_db
-from ..models import DayClosure, Employee, Expense, PayrollRun, Payslip, SalesDaily, User
+from ..owner_controls import owner_policy
+from ..operating_evidence import staffing_plan as build_staffing_plan
+from ..models import (Attendance, DayClosure, Employee, Expense, PayrollRun,
+                      Payslip, SalesBill, SalesDaily, User)
 from ..security import current_user
+from ..util import analytics_date_range
 from .helpers import assert_outlet_access, user_outlet_ids
 from .losses import losses_paise
+from ..attendance_lib import worked_minutes
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 CHANNEL_KINDS = ["cash", "upi", "card", "wallet", "aggregator", "split", "due", "other"]
+
+
+def _sales_by_day(db: Session, outlet_ids: list[int], lo: date, hi: date) -> dict[str, int]:
+    rows = (db.query(SalesDaily)
+              .filter(SalesDaily.outlet_id.in_(outlet_ids),
+                      SalesDaily.business_date >= lo.isoformat(),
+                      SalesDaily.business_date <= hi.isoformat()).all())
+    imported = {}
+    for row in rows:
+        if row.source == "petpooja":
+            imported.setdefault((row.outlet_id, row.business_date), set()).add(row.channel_kind)
+    totals: dict[str, int] = {}
+    for row in rows:
+        if row.source != "petpooja" and row.channel_kind in imported.get(
+                (row.outlet_id, row.business_date), set()):
+            continue
+        amount = row.total_paise if row.source == "petpooja" else (row.amount_paise or 0)
+        totals[row.business_date] = totals.get(row.business_date, 0) + amount
+    return totals
 
 
 @router.get("/last-activity")
@@ -51,6 +74,8 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
               user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Any-range, multi-series engine. Returns every daily series we hold,
     so the UI can compare any combination without refetching."""
+    lo, hi = analytics_date_range(start, end)
+    start, end = lo.isoformat(), hi.isoformat()
     from datetime import date as D
 
     outlets = user_outlet_ids(db, user)
@@ -67,25 +92,30 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
                        Expense.business_date >= start,
                        Expense.business_date <= end).all())
 
-    eff: dict[tuple[str, str], int] = {}
-    net_eff: dict[tuple[str, str], int] = {}
+    sales_by_day_channel: dict[tuple[str, str], int] = {}
+    sales_by_day: dict[str, int] = {}
+    net_sales_by_day: dict[str, int] = {}
+    expenses_by_day: dict[str, int] = {}
+    cash_expenses_by_day: dict[str, int] = {}
     tips_m: dict[str, int] = {}
     disc_m: dict[str, int] = {}
     tax_m: dict[str, int] = {}
     bills_m: dict[str, int] = {}
-    imp_kinds_by_day: dict[str, set] = {}
+    imp_kinds_by_day: dict[tuple[int, str], set] = {}
 
     for r in srows:
         if r.source == "petpooja":
-            imp_kinds_by_day.setdefault(r.business_date, set()).add(r.channel_kind)
+            imp_kinds_by_day.setdefault((r.outlet_id, r.business_date), set()).add(r.channel_kind)
     for r in srows:
         amount = r.total_paise if r.source == "petpooja" else (r.amount_paise or 0)
-        if r.source != "petpooja" and r.channel_kind in imp_kinds_by_day.get(r.business_date, set()):
+        if (r.source != "petpooja"
+                and r.channel_kind in imp_kinds_by_day.get((r.outlet_id, r.business_date), set())):
             continue
         key = (r.business_date, r.channel_kind)
-        eff[key] = eff.get(key, 0) + amount
-        net_eff[key] = net_eff.get(key, 0) + (r.net_paise if r.source == "petpooja"
-                                              else (r.amount_paise or 0))
+        sales_by_day_channel[key] = sales_by_day_channel.get(key, 0) + amount
+        sales_by_day[r.business_date] = sales_by_day.get(r.business_date, 0) + amount
+        net_sales_by_day[r.business_date] = net_sales_by_day.get(r.business_date, 0) + (
+            r.net_paise if r.source == "petpooja" else (r.amount_paise or 0))
         if r.source == "petpooja":
             tips_m[r.business_date] = tips_m.get(r.business_date, 0) + (r.tip_paise or 0)
             disc_m[r.business_date] = disc_m.get(r.business_date, 0) + (r.discount_paise or 0)
@@ -93,12 +123,17 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
             bills_m[r.business_date] = bills_m.get(r.business_date, 0) + r.bills
         elif amount > 0:
             bills_m[r.business_date] = bills_m.get(r.business_date, 0) + 1
+    for expense in erows:
+        expenses_by_day[expense.business_date] = (
+            expenses_by_day.get(expense.business_date, 0) + expense.amount_paise)
+        if expense.mode == "cash":
+            cash_expenses_by_day[expense.business_date] = (
+                cash_expenses_by_day.get(expense.business_date, 0) + expense.amount_paise)
 
     days: list[str] = []
-    d0 = D.fromisoformat(start)
-    d1 = D.fromisoformat(end)
+    d0, d1 = lo, hi
     cur = d0
-    while cur <= d1 and len(days) <= 370:
+    while cur <= d1:
         days.append(cur.isoformat())
         cur = D.fromordinal(cur.toordinal() + 1)
 
@@ -110,33 +145,24 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
         series[key] = vals
         totals[key] = round(sum(vals), 2)
 
-    kinds_present = sorted({k for (_, k) in eff} | set(CHANNEL_KINDS[:3]))
+    kinds_present = sorted({kind for (_, kind) in sales_by_day_channel} | set(CHANNEL_KINDS[:3]))
     for kind in kinds_present:
-        reg(f"sales_{kind}", lambda day, _k=kind: eff.get((day, _k), 0))
+        reg(f"sales_{kind}", lambda day, _k=kind: sales_by_day_channel.get((day, _k), 0))
 
-    def day_total(day):
-        return sum(v for (bd, _), v in eff.items() if bd == day)
-
-    def day_net(day):
-        return sum(v for (bd, _), v in net_eff.items() if bd == day)
-
-    reg("sales_total", day_total)
-    reg("sales_net", day_net)
-    reg("expenses", lambda day: sum(e.amount_paise for e in erows
-                                    if e.business_date == day))
-    reg("expense_cash", lambda day: sum(e.amount_paise for e in erows
-                                        if e.business_date == day
-                                        and e.mode == "cash"))
+    reg("sales_total", lambda day: sales_by_day.get(day, 0))
+    reg("sales_net", lambda day: net_sales_by_day.get(day, 0))
+    reg("expenses", lambda day: expenses_by_day.get(day, 0))
+    reg("expense_cash", lambda day: cash_expenses_by_day.get(day, 0))
     reg("tips", lambda day: tips_m.get(day, 0))
     reg("discounts", lambda day: disc_m.get(day, 0))
     reg("tax", lambda day: tax_m.get(day, 0))
     series["bills"] = [bills_m.get(day, 0) for day in days]
     totals["bills"] = sum(series["bills"])
     series["avg_ticket"] = [
-        round(day_total(day) / max(1, bills_m.get(day, 0)) / 100, 2)
+        round(sales_by_day.get(day, 0) / max(1, bills_m.get(day, 0)) / 100, 2)
         for day in days]
     totals["avg_ticket"] = round(
-        sum(eff.values()) / max(1, sum(bills_m.values())) / 100, 2)
+        sum(sales_by_day.values()) / max(1, sum(bills_m.values())) / 100, 2)
 
     # weekday averages of total sales (Mon..Sun index 0..6)
     dow_sum: dict[int, float] = {}
@@ -319,9 +345,9 @@ def dashboard(outlet_id: int | None = None, month: str | None = None,
                           DayClosure.business_date >= lo.isoformat(),
                           DayClosure.business_date <= hi.isoformat()).all())
     variance = sum(c.variance_paise for c in closures)
+    alerts = {oid: owner_policy(db, oid)["cash_variance_alert_paise"] for oid in outlets}
     bad_days = [{"date": c.business_date, "variance_rupees": round(c.variance_paise / 100, 2)}
-                for c in closures if abs(c.variance_paise) >
-                int(get_setting_db(db, "variance_alert_paise", 20_000))]
+                for c in closures if abs(c.variance_paise) > alerts[c.outlet_id]]
 
     trend = []
     for k, v in sorted(by_day.items()):
@@ -390,3 +416,91 @@ def offday_coverage(outlet_id: int, user: User = Depends(current_user),
             "dow": dow, "off_count": len(off_today), "detail": backups,
         })
     return {"outlet_id": outlet_id, "days": grid}
+
+
+@router.get("/labour-productivity")
+def labour_productivity(outlet_id: int, start: str, end: str,
+                        user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Observed labour effectiveness; never invent hourly sales from daily totals."""
+    lo, hi = analytics_date_range(start, end)
+    assert_outlet_access(db, user, outlet_id)
+    employees = db.query(Employee.id).filter(
+        Employee.outlet_id == outlet_id, Employee.working_status != "left").all()
+    employee_ids = [row[0] for row in employees]
+    attendance_rows = (db.query(Attendance)
+                         .filter(Attendance.employee_id.in_(employee_ids),
+                                 Attendance.business_date >= lo.isoformat(),
+                                 Attendance.business_date <= hi.isoformat()).all()) if employee_ids else []
+    labour_by_day: dict[str, int] = {}
+    incomplete_days: set[str] = set()
+    for row in attendance_rows:
+        minutes = worked_minutes(row)
+        if minutes is None:
+            if row.status in ("P", "H"):
+                incomplete_days.add(row.business_date)
+            continue
+        labour_by_day[row.business_date] = labour_by_day.get(row.business_date, 0) + minutes
+
+    sales = _sales_by_day(db, [outlet_id], lo, hi)
+    bills = (db.query(SalesBill)
+               .filter(SalesBill.outlet_id == outlet_id,
+                       SalesBill.business_date >= lo.isoformat(),
+                       SalesBill.business_date <= hi.isoformat()).all())
+    hourly: dict[int, dict] = {}
+    timestamped_bills = 0
+    for bill in bills:
+        try:
+            hour = int(bill.bill_ts[11:13])
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= hour <= 23:
+            continue
+        timestamped_bills += 1
+        bucket = hourly.setdefault(hour, {"hour": hour, "bills": 0, "sales_paise": 0})
+        bucket["bills"] += 1
+        bucket["sales_paise"] += bill.total_paise
+
+    daily = []
+    for day in sorted(set(sales) | set(labour_by_day)):
+        minutes = labour_by_day.get(day, 0)
+        amount = sales.get(day, 0)
+        daily.append({
+            "date": day, "labour_hours": round(minutes / 60, 2),
+            "sales_rupees": round(amount / 100, 2),
+            "sales_per_labour_hour_rupees": round(amount / 100 / (minutes / 60), 2)
+            if minutes else None,
+        })
+    total_minutes = sum(labour_by_day.values())
+    total_sales = sum(sales.values())
+    return {
+        "start": lo.isoformat(), "end": hi.isoformat(),
+        "labour_hours": round(total_minutes / 60, 2),
+        "sales_rupees": round(total_sales / 100, 2),
+        "sales_per_labour_hour_rupees": round(total_sales / 100 / (total_minutes / 60), 2)
+        if total_minutes else None,
+        "bills_per_labour_hour": round(len(bills) / (total_minutes / 60), 2)
+        if total_minutes else None,
+        "daily": daily,
+        "hourly_demand": [hourly[hour] for hour in sorted(hourly)],
+        "peak_hour": max(hourly.values(), key=lambda row: row["bills"])["hour"]
+        if hourly else None,
+        "data_quality": {
+            "timestamped_bills": timestamped_bills,
+            "manual_sales_unattributed": bool(
+                db.query(SalesDaily.id).filter(
+                    SalesDaily.outlet_id == outlet_id,
+                    SalesDaily.business_date >= lo.isoformat(),
+                    SalesDaily.business_date <= hi.isoformat(),
+                    SalesDaily.source == "manual").first()),
+            "attendance_clock_gaps": sorted(incomplete_days),
+        },
+    }
+
+
+@router.get("/staffing-plan")
+def staffing_plan(outlet_id: int, start: str, end: str,
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Evidence-only staffing candidates; no inferred rosters or staff ranking."""
+    lo, hi = analytics_date_range(start, end)
+    assert_outlet_access(db, user, outlet_id)
+    return build_staffing_plan(db, outlet_id, lo, hi)

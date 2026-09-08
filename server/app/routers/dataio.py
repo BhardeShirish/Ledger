@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import bankstmt
 from ..audit import audit, check_edit_window, get_setting_db
+from ..periods import assert_dates_open
 from ..db import get_db
 from ..models import (Advance, Attendance, DayClosure, Employee, Expense,
                       ExpenseCategory, ImportBatch, PayrollRun, Payslip,
@@ -559,6 +560,10 @@ async def run_import(entity: str, outlet_id: int, file: UploadFile,
                 if hk.startswith(n.lower()) and hv not in (None, ""):
                     return hv
         return None
+
+    assert_dates_open(db, outlet_id, {
+        d for d in (_as_date(col(row, "date")) for row in rows) if d
+    })
 
     created = skipped = 0
     errors = []

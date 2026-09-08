@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { fmtDate, inr, todayISO } from "../lib/format";
 import { Badge, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
+import IntelligencePanel from "../components/IntelligencePanel";
 
 type Ctx = { outletId: number };
 
@@ -69,6 +70,8 @@ export default function DailyBrief() {
         </Card>
       )}
 
+      {me?.role === "owner" && <IntelligencePanel outletId={outletId} asOf={today} />}
+
       {/* Numbers */}
       <div className="grid grid-cols-2 gap-3">
         <StatTile label="Sales today"
@@ -80,6 +83,8 @@ export default function DailyBrief() {
                            : inr(Math.round(fc.data.projected_rupees * 100))}
                     sub={fc.data.projected_rupees == null
                          ? "no sales recorded yet this month"
+                         : fc.data.confidence
+                         ? `${fc.data.confidence} confidence`
                          : fc.data.target_rupees
                          ? `${fc.data.percent_of_target}% of target`
                          : "no target set"} />

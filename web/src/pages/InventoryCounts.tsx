@@ -13,6 +13,10 @@ export default function InventoryCounts() {
   const [countId, setCountId] = useState<number | null>(null);
   const [values, setValues] = useState<Record<number, string>>({});
   const [result, setResult] = useState<any>(null);
+  const history = useQuery({
+    queryKey: ["inv-count-history", outletId],
+    queryFn: () => api.get(`/inventory/counts?outlet_id=${outletId}&start=2020-01-01&end=${new Date().toISOString().slice(0, 10)}`),
+  });
 
   const start = useMutation({
     mutationFn: () => guarded(() => api.post(`/inventory/count/start?outlet_id=${outletId}`)),
@@ -30,7 +34,8 @@ export default function InventoryCounts() {
         .map(([sid, v]) => ({ stock_item_id: Number(sid), counted_qty: Number(v) })),
     })),
     onSuccess: (r) => { setResult(r.json ?? r); setCountId(null); setValues({});
-                        qc.invalidateQueries({ queryKey: ["inv-overview"] }); },
+                        qc.invalidateQueries({ queryKey: ["inv-overview"] });
+                        qc.invalidateQueries({ queryKey: ["inv-count-history"] }); },
   });
   const lines: any[] = count.data?.lines ?? [];
   const complete = lines.length > 0 && lines.every((line) => {
@@ -89,6 +94,39 @@ export default function InventoryCounts() {
                   {Number(values[l.stock_item_id]) - l.system_qty >= 0 ? "+" : ""}
                   {Math.round((Number(values[l.stock_item_id]) - l.system_qty) * 100) / 100}
                 </span>
+              )}
+
+              {!countId && !result && (history.data?.counts ?? []).length > 0 && (
+                <Card className="overflow-hidden">
+                  <div className="border-b border-rule px-4 py-3">
+                    <h2 className="font-semibold">Count variance history</h2>
+                    <p className="mt-0.5 text-sm text-ink-faint">Frozen shelf counts compared with the system quantity at that time.</p>
+                  </div>
+                  <div className="divide-y divide-rule">
+                    {history.data.counts.slice(0, 6).map((count: any) => (
+                      <details key={count.id} className="group">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-paper-3/50">
+                          <span className="font-medium">{fmtDateShort(count.date)}</span>
+                          <span className={`num ${count.variance_value_paise < 0 ? "text-bad" : "text-good"}`}>
+                            {inr(count.variance_value_paise, { sign: true })}
+                          </span>
+                        </summary>
+                        <div className="border-t border-rule bg-paper-2 px-4 py-2">
+                          {count.lines.map((line: any) => (
+                            <div key={line.stock_item_id} className="flex items-baseline gap-3 py-1 text-sm">
+                              <span className="min-w-0 flex-1 truncate">{line.name}</span>
+                              <span className="num text-ink-faint">sys {line.theoretical_qty}</span>
+                              <span className="num">physical {line.physical_qty}</span>
+                              <span className={`num w-16 text-right ${line.variance_qty < 0 ? "text-bad" : "text-good"}`}>
+                                {line.variance_qty >= 0 ? "+" : ""}{line.variance_qty}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </Card>
               )}
             </div>
           ))}

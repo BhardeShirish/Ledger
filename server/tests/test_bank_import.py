@@ -230,7 +230,8 @@ def test_upload_previews_without_writing_anything(client, outlet_id):
     before = len(expenses(client, outlet_id))
     body = upload(client, outlet_id).json()
     assert body["debits"] == 4
-    assert body["credits_ignored"] == 1
+    assert body["credits"] == 1
+    assert body["credits_ignored"] == 0
     assert body["new_rows"] == 4
     payees = {p["match_key"]: p for p in body["payees"]}
     assert payees["annapurna@okaxis"]["count"] == 2

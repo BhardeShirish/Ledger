@@ -1,6 +1,8 @@
 """Forecasting, anomalies, budgets, break-even, benchmark, unit economics,
 menu items, month-close pack."""
 import io
+from datetime import date, timedelta
+
 import openpyxl
 
 
@@ -184,6 +186,77 @@ def test_benchmark_and_breakeven_shapes(client, outlet_id):
     be = client.get("/api/insights/breakeven", params={"outlet_id": outlet_id}).json()
     assert {"fixed_costs_rupees", "coverage_percent", "cost_per_bill_rupees"} \
         <= set(be.keys())
+
+
+def test_benchmark_calls_pre_payroll_result_by_its_true_name(client, outlet_id):
+    b = client.get("/api/insights/benchmark", params={
+        "start": _old(30), "end": _today()}).json()
+    row = next(item for item in b if item["outlet_id"] == outlet_id)
+    assert "contribution_before_payroll_rupees" in row
+    assert row["profit_rupees"] is None
+    assert row["profit_known"] is False
+    assert "Payroll" in row["profit_unknown_why"]
+
+
+def test_analytics_ranges_accept_all_time_and_reject_bad_dates(client, outlet_id):
+    today = date.today()
+    endpoints = (
+        ("/api/stats/analytics", {"outlet_id": outlet_id}),
+        ("/api/insights/benchmark", {}),
+        ("/api/insights/unit-economics", {"outlet_id": outlet_id}),
+        ("/api/insights/items", {"outlet_id": outlet_id}),
+    )
+    valid_ranges = (
+        ("2020-01-01", today.isoformat()),
+        ((today - timedelta(days=370)).isoformat(), today.isoformat()),
+    )
+    for endpoint, extra in endpoints:
+        for start, end in valid_ranges:
+            r = client.get(endpoint, params={**extra, "start": start, "end": end})
+            assert r.status_code == 200, (endpoint, start, end, r.text)
+
+    invalid_ranges = (
+        ("not-a-date", today.isoformat()),
+        (today.isoformat(), (today - timedelta(days=1)).isoformat()),
+        ((today - timedelta(days=3660)).isoformat(), today.isoformat()),
+    )
+    for endpoint, extra in endpoints:
+        for start, end in invalid_ranges:
+            r = client.get(endpoint, params={**extra, "start": start, "end": end})
+            assert r.status_code == 422, (endpoint, start, end, r.text)
+            if start == (today - timedelta(days=3660)).isoformat():
+                assert "3660 days" in r.json()["detail"]
+
+
+def test_analytics_keeps_manual_sales_from_another_outlet(client, outlet_id):
+    """POS precedence is scoped to one outlet, not every outlet on that date."""
+    from app.db import SessionLocal
+    from app.models import SalesDaily
+
+    other = client.post("/api/outlets", json={"name": "Second outlet"}).json()
+    business_date = _old(7)
+    with SessionLocal() as db:
+        db.add_all([
+            SalesDaily(
+                outlet_id=outlet_id, business_date=business_date,
+                channel_kind="cash", source="petpooja", bills=1,
+                total_paise=10_000, net_paise=9_000,
+            ),
+            SalesDaily(
+                outlet_id=other["id"], business_date=business_date,
+                channel_kind="cash", source="manual", amount_paise=5_000,
+            ),
+        ])
+        db.commit()
+
+    result = client.get("/api/stats/analytics", params={
+        "start": business_date, "end": business_date,
+    })
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert data["series"]["sales_cash"] == [150.0]
+    assert data["totals"]["sales_total"] == 150.0
+    assert data["totals"]["sales_net"] == 140.0
 
 
 def test_budgets_flow(client):

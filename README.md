@@ -17,6 +17,27 @@ modified copy as a service for other people, you must publish your changes.
 > stays grey until payroll has actually been run, and "no problems found" is
 > never claimed for a month with nothing recorded in it.
 
+## See it in action
+
+These screenshots use Ledger's built-in fictional demo data. They contain no
+real restaurant, employee, supplier, or customer records.
+
+<p align="center">
+  <img src="docs/screenshots/01-home.png" alt="Ledger daily operating checklist" width="49%">
+  <img src="docs/screenshots/07-daily-brief.png" alt="Ledger owner intelligence brief" width="49%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/04-inventory.png" alt="Ledger evidence-backed inventory risks" width="49%">
+  <img src="docs/screenshots/06-purchase-orders.png" alt="Ledger purchase orders and controlled receiving" width="49%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/09-deep-analysis.png" alt="Ledger deep restaurant analysis" width="49%">
+  <img src="docs/screenshots/12-mobile-home.png" alt="Ledger daily checklist on a phone" width="24%">
+</p>
+
+See the [full screenshot tour](docs/SCREENSHOTS.md) for expenses, cash close,
+reordering, reports, staffing, and owner controls.
+
 ---
 
 ## Try it in five minutes
@@ -32,7 +53,16 @@ echo "LEDGER_DEMO_SEED=1" >> .env
 docker compose up -d
 ```
 
-**Windows, no Docker:** double-click `Start-Ootaa-Ledger.cmd`.
+**Windows, no Docker:** from PowerShell in a source checkout:
+
+```powershell
+$env:LEDGER_OWNER_PASSWORD = "demo-ledger-password"
+$env:LEDGER_DEMO_SEED = "1"
+.\start.ps1
+```
+
+Then sign in as `owner` with `demo-ledger-password`. The demo data is created
+only on a new database; do not set `LEDGER_DEMO_SEED` for a real restaurant.
 
 Either way, open <http://localhost:8080> and sign in as `owner` with the
 password you set. Remove the `LEDGER_DEMO_SEED` line and start from an empty
@@ -87,7 +117,7 @@ docker run -d --name ootaa-ledger \
   -v ledger-data:/data \
   -e LEDGER_OWNER_PASSWORD='choose-a-long-password' \
   --restart unless-stopped \
-  ghcr.io/OWNER/REPO:latest
+  ghcr.io/bhardeshirish/ledger:latest
 ```
 
 Then open <http://localhost:8080>. Images are published for **linux/amd64 and
@@ -110,13 +140,13 @@ The target machine needs Docker and nothing else:
 
 ```bash
 # on a machine that has the image
-docker save ghcr.io/OWNER/REPO:latest | gzip > ledger-image.tar.gz   # ~115 MB
+docker save ghcr.io/bhardeshirish/ledger:latest | gzip > ledger-image.tar.gz   # ~115 MB
 
 # on the target machine
 gunzip -c ledger-image.tar.gz | docker load
 docker run -d --name ootaa-ledger -p 127.0.0.1:8080:8080 \
   -v ledger-data:/data -e LEDGER_OWNER_PASSWORD='choose-a-long-password' \
-  --restart unless-stopped ghcr.io/OWNER/REPO:latest
+  --restart unless-stopped ghcr.io/bhardeshirish/ledger:latest
 ```
 
 Records live in the `ledger-data` volume, not in the image, so replacing or
@@ -132,9 +162,6 @@ writable. CI builds it, pushes it, then pulls the published image back down
 and fails the run unless it actually serves the app. `docker compose` refuses
 to start at all if `LEDGER_OWNER_PASSWORD` is missing or too short — better a
 loud restart loop than a box on the internet with a weak password.
-
-> Replace `OWNER/REPO` with your GitHub path once you have pushed this
-> repository; that is where the publish workflow puts the image.
 
 ---
 
@@ -259,26 +286,33 @@ advisory rather than a public issue.
 
 ---
 
-## How the pieces fit
+## What Ledger does
 
-- **Home = today's flow**: attendance → sales → expenses → close-the-day.
-  Green ticks when each is done, and a reminder appears for days you skipped.
-- **Attendance grid**: one day at a time (today by default, never a future
-  day); statuses cycle P→A→H→L→WO; times pre-fill from shifts; `×2` credits a
-  double shift as an extra day, while `A ×2` counts two days missed and is
-  never paid; late and OT are derived automatically.
-- **Payroll mirrors the Excel exactly**: `per-day = salary ÷ 26`,
-  `month pay = credited days × per-day − same-month advances`. Drafts show the
-  full arithmetic; finalising locks the month.
-- **Day sheet** records the day's takings plus losses — a refund to a customer,
-  cash missing from the drawer, wastage — and each loss says whether it came
-  out of the till, which is what the drawer count is checked against.
-- **Petpooja importer** reads the Orders Master Report (47 columns), handles
-  Part/Due payments, skips cancelled bills, dedupes per invoice+day.
-- **Cash register** computes the expected drawer (float + cash sales − cash out
-  − drawer losses) against the counted cash; variances surface in Insights.
-- **Inventory** tracks purchases, wastage, counts, reorder quantities,
-  ingredient links, usage and dish profitability.
+| Area | What it gives a restaurant owner |
+|---|---|
+| **Daily operation** | A single checklist for attendance, sales, expenses, and cash close; catch-up prompts make missed days visible instead of silently treating them as zero. |
+| **Sales and expense capture** | Manual channel totals, Petpooja bill imports, split payments, refunds and losses, receipt attachments, vendor selection, and bulk line-item bills. Manual totals are never misrepresented as bill-level or hourly facts. |
+| **Cash and bank control** | Expected-versus-counted drawer cash, explicit money moved to bank, partial many-to-many bank reconciliation, and clear separation between statement credits and sales. |
+| **Purchasing and payables** | Draft, approve, cancel, receive, and finalize purchase orders. Only a finalized receipt writes an expense, stock movement, and supplier liability; FIFO payable aging prevents already-settled old bills being shown as overdue. |
+| **Inventory and recipes** | Stock items, purchases, wastage, physical counts, count-variance history, confirmed ingredient links, theoretical recipe consumption, and evidence-gated reorder drafts. Recipe forecasts never change stock automatically. |
+| **People and payroll** | Shift-aware attendance, lateness and overtime, staff advances, transparent payroll drafts, and finalized payroll controls. Staff planning uses timestamped bills and actual attendance, never manual sales totals. |
+| **Reports and analysis** | Month P&L, cost coverage warnings, break-even, budgets, forecast scenarios, sales/expense trends, supplier price movement, labour productivity, menu engineering, and service-period demand evidence. |
+| **Owner intelligence** | A ranked Daily Brief with deterministic evidence, confidence, deep links, policy thresholds, resolution history, recurring-cost reviews, close-readiness exceptions, conservative cash-flow runway, and system-health/restore guidance. |
+| **Optional AI wording** | An owner-clicked priority brief can rephrase anonymous aggregate findings. It never receives names, figures, transactions, notes, dates, documents, or links, and it can never make writes or financial decisions. |
+| **Safety and ownership** | Local SQLite storage, append-only audit history, explicit month close/reopen controls, owner elevation for sensitive changes, offline-safe queues for selected entries, backups, and a responsive phone-friendly interface. |
+
+### How the key rules work
+
+- **Financial truth first:** recorded expenses are not automatically all costs,
+  and sales minus recorded expenses is not called profit until coverage makes
+  that claim credible.
+- **Closed books stay closed:** financial writes to a closed month return a
+  clear lock error until an owner deliberately reopens that period.
+- **Evidence before advice:** missing recipes, count history, purchase cadence,
+  or timestamped demand suppresses a recommendation instead of inventing it.
+- **Human approval stays in control:** AI is optional and advisory; purchase
+  approval, receiving, cash reconciliation, payroll, and closing books always
+  require a person in Ledger.
 
 ## Non-goals (by design)
 

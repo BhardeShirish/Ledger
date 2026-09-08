@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from ..audit import audit, check_edit_window
 from ..db import get_db
+from ..periods import assert_month_open
+from ..operating_evidence import menu_engineering
 from ..models import (Expense, SalesDaily, SalesItem, StockCount,
                       StockCountLine, StockItem, StockLink, StockMovement,
-                      User, Vendor)
+                      User)
 from ..security import current_user, require_owner
 from ..util import now_local
 from .helpers import assert_outlet_access, user_outlet_ids
@@ -251,6 +253,7 @@ def add_wastage(body: WastageIn, user: User = Depends(current_user),
                 db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
     check_edit_window(body.business_date, user, db)
+    assert_month_open(db, body.outlet_id, body.business_date)
     si = (
         db.query(StockItem)
         .filter_by(id=body.stock_item_id, outlet_id=body.outlet_id)
@@ -331,6 +334,191 @@ def _usage_per_day(db, outlet_id: int, days: int = 30) -> dict[int, float]:
     return out
 
 
+def _intelligence_window(start: str | None, end: str | None) -> tuple[str, str, int]:
+    today = now_local().date()
+    try:
+        last = date.fromisoformat(end) if end else today
+        first = date.fromisoformat(start) if start else last - timedelta(days=29)
+    except ValueError:
+        raise HTTPException(422, "start and end must be ISO dates") from None
+    if first > last or last > today or (last - first).days > 366:
+        raise HTTPException(422, "Choose a window from the past 367 days")
+    return first.isoformat(), last.isoformat(), (last - first).days + 1
+
+
+def _coverage(observed: int, required: int, label: str) -> dict:
+    return {
+        "observed": observed, "required": required,
+        "status": "usable" if observed >= required else "insufficient",
+        "caveat": None if observed >= required
+        else f"{label} needs at least {required} recorded observation{'s' if required != 1 else ''}.",
+    }
+
+
+def build_inventory_intelligence(db: Session, outlet_id: int, start: str | None,
+                                 end: str | None, stockout_lead_days: int = 3) -> dict:
+    """Return deterministic evidence without treating recipe estimates as stock facts."""
+    start, end, days = _intelligence_window(start, end)
+    items = (db.query(StockItem).filter_by(outlet_id=outlet_id, is_active=True)
+               .order_by(StockItem.name).all())
+    item_by_id = {item.id: item for item in items}
+    links_by_item: dict[int, list[StockLink]] = {}
+    for link in (db.query(StockLink)
+                   .filter_by(outlet_id=outlet_id, status="confirmed").all()):
+        if (link.stock_item_id in item_by_id and math.isfinite(link.coefficient)
+                and link.coefficient >= 0):
+            links_by_item.setdefault(link.stock_item_id, []).append(link)
+
+    sales_by_name: dict[str, list[SalesItem]] = {}
+    for sale in (db.query(SalesItem)
+                   .filter(SalesItem.outlet_id == outlet_id,
+                           SalesItem.business_date >= start, SalesItem.business_date <= end,
+                           SalesItem.qty > 0).all()):
+        sales_by_name.setdefault(sale.item_name, []).append(sale)
+
+    movements_by_item: dict[int, list[StockMovement]] = {}
+    for movement in (db.query(StockMovement)
+                       .filter(StockMovement.outlet_id == outlet_id,
+                               StockMovement.business_date >= start,
+                               StockMovement.business_date <= end).all()):
+        if movement.stock_item_id in item_by_id:
+            movements_by_item.setdefault(movement.stock_item_id, []).append(movement)
+
+    counts_by_item: dict[int, list[dict]] = {}
+    count_rows = (db.query(StockCount, StockCountLine)
+                    .join(StockCountLine, StockCountLine.count_id == StockCount.id)
+                    .filter(StockCount.outlet_id == outlet_id, StockCount.status == "done",
+                            StockCount.business_date >= start, StockCount.business_date <= end)
+                    .order_by(StockCount.business_date, StockCount.id).all())
+    for count, line in count_rows:
+        if line.stock_item_id in item_by_id and line.counted_qty is not None:
+            # These are the frozen values saved when the count completed. Do not
+            # replace system_qty with the item's live quantity.
+            counts_by_item.setdefault(line.stock_item_id, []).append({
+                "date": count.business_date,
+                "system_qty": round(line.system_qty, 3),
+                "counted_qty": round(line.counted_qty, 3),
+                "variance_qty": round(line.counted_qty - line.system_qty, 3),
+            })
+
+    last_purchase_cost: dict[int, int] = {}
+    for movement in (db.query(StockMovement)
+                       .filter(StockMovement.outlet_id == outlet_id,
+                               StockMovement.type == "purchase",
+                               StockMovement.business_date <= end)
+                       .order_by(StockMovement.business_date.desc(), StockMovement.id.desc()).all()):
+        last_purchase_cost.setdefault(movement.stock_item_id, movement.unit_cost_paise)
+
+    result = []
+    for item in items:
+        links = links_by_item.get(item.id, [])
+        sales = [sale for link in links for sale in sales_by_name.get(link.menu_item_name, [])]
+        # A sales row can only match one link for an ingredient because StockLink
+        # is unique on stock item + menu item.
+        raw_expected = (sum(sale.qty * link.coefficient for link in links
+                            for sale in sales_by_name.get(link.menu_item_name, []))
+                        if sales else None)
+        purchase_rows = [m for m in movements_by_item.get(item.id, [])
+                         if m.type == "purchase" and m.qty > 0]
+        wastage_rows = [m for m in movements_by_item.get(item.id, [])
+                        if m.type == "wastage"]
+        adjustment_rows = [m for m in movements_by_item.get(item.id, [])
+                           if m.type in ("count_fix", "adjustment")]
+        sales_days = len({sale.business_date for sale in sales})
+        purchase_days = len({movement.business_date for movement in purchase_rows})
+        snapshots = counts_by_item.get(item.id, [])
+        unit_compatible = bool(item.base_unit.strip()) and bool(links)
+        sales_coverage = _coverage(sales_days, 2, "Velocity")
+        purchase_coverage = _coverage(purchase_days, 2, "Purchase coverage")
+        count_coverage = _coverage(len(snapshots), 1, "Physical count coverage")
+        recipe_coverage = {
+            "observed": len(links), "required": 1,
+            "status": "usable" if unit_compatible else "insufficient",
+            "caveat": None if unit_compatible
+            else "A confirmed recipe expressed in this item's tracked base unit is required.",
+        }
+        # A single item-sales record proves neither a representative recipe
+        # window nor a consumption rate. Withhold the estimate rather than
+        # displaying a precise-looking one-observation conclusion.
+        expected = raw_expected if unit_compatible and sales_coverage["status"] == "usable" else None
+        can_forecast = (expected is not None and unit_compatible
+                        and sales_coverage["status"] == "usable" and days >= 7)
+        can_recommend = (can_forecast and purchase_coverage["status"] == "usable"
+                         and count_coverage["status"] == "usable" and item.par_qty > 0)
+        caveats = [
+            "Current stock is a live snapshot, not historical evidence for this window.",
+            "Recipe consumption is expected usage only; it never creates a stock movement.",
+        ]
+        for source in (recipe_coverage, sales_coverage, purchase_coverage, count_coverage):
+            if source["caveat"]:
+                caveats.append(source["caveat"])
+        if days < 7:
+            caveats.append("Velocity needs a window of at least seven calendar days.")
+        if item.par_qty <= 0:
+            caveats.append("Set a positive par level before a reorder can be recommended.")
+
+        velocity = round(expected / days, 3) if can_forecast else None
+        cover_days = round(item.current_qty / velocity, 1) if velocity and velocity > 0 else None
+        recommendation = round(max(0.0, item.par_qty - item.current_qty), 2) \
+            if can_recommend else None
+        if not can_recommend:
+            risk = None
+        elif item.current_qty <= item.min_qty:
+            risk = "at_or_below_minimum"
+        elif cover_days is not None and cover_days <= stockout_lead_days:
+            risk = "stockout_risk"
+        elif recommendation and recommendation > 0:
+            risk = "below_par"
+        else:
+            risk = "no_reorder_needed"
+        confidence = "high" if can_recommend else "medium" if can_forecast else "insufficient"
+        result.append({
+            "stock_item_id": item.id, "item": item.name, "base_unit": item.base_unit,
+            "current_qty": round(item.current_qty, 3), "min_qty": item.min_qty,
+            "par_qty": item.par_qty,
+            "expected_consumption_qty": round(expected, 3) if expected is not None else None,
+            "expected_consumption_unit": item.base_unit if expected is not None else None,
+            "confirmed_recipe_links": len(links),
+            "purchases_qty": round(sum(m.qty for m in purchase_rows), 3) if purchase_rows else None,
+            "recorded_wastage_qty": round(-sum(m.qty for m in wastage_rows), 3)
+            if wastage_rows else None,
+            "recorded_adjustments_qty": round(sum(m.qty for m in adjustment_rows), 3)
+            if adjustment_rows else None,
+            "count_variances": snapshots,
+            "velocity_per_day": velocity, "days_of_cover": cover_days,
+            "reorder_recommendation_qty": recommendation,
+            "reorder_eligible": can_recommend, "risk": risk,
+            "last_purchase_unit_cost_rupees": round(
+                last_purchase_cost[item.id] / 100, 2) if item.id in last_purchase_cost else None,
+            "confidence": confidence,
+            "coverage": {
+                "recipes": recipe_coverage, "sales": sales_coverage,
+                "purchases": purchase_coverage, "counts": count_coverage,
+                "unit_compatible": unit_compatible,
+            },
+            "caveats": caveats,
+        })
+    result.sort(key=lambda row: (
+        not row["reorder_eligible"], row["reorder_recommendation_qty"] is None,
+        -(row["reorder_recommendation_qty"] or 0), row["item"].lower()))
+    return {
+        "start": start, "end": end, "window_days": days,
+        "method": "deterministic_computed_on_read",
+        "stockout_lead_days": stockout_lead_days,
+        "items": result,
+    }
+
+
+@router.get("/intelligence")
+def inventory_intelligence(outlet_id: int, start: str | None = None, end: str | None = None,
+                           user: User = Depends(current_user), db: Session = Depends(get_db)):
+    assert_outlet_access(db, user, outlet_id)
+    first, last, _ = _intelligence_window(start, end)
+    from ..owner_controls import owner_policy
+    return build_inventory_intelligence(
+        db, outlet_id, first, last, owner_policy(db, outlet_id)["stockout_lead_days"])
+
+
 @router.get("/overview")
 def overview(outlet_id: int, user: User = Depends(current_user),
              db: Session = Depends(get_db)):
@@ -338,23 +526,30 @@ def overview(outlet_id: int, user: User = Depends(current_user),
     items = (db.query(StockItem)
                .filter_by(outlet_id=outlet_id, is_active=True)
                .order_by(StockItem.name).all())
-    usage = _usage_per_day(db, outlet_id)
+    evidence_by_id = {
+        row["stock_item_id"]: row
+        for row in build_inventory_intelligence(
+            db, outlet_id, None, None,
+            __import__("app.owner_controls", fromlist=["owner_policy"]).owner_policy(
+                db, outlet_id)["stockout_lead_days"])["items"]
+    }
     out = []
     for it in items:
-        upd = usage.get(it.id, 0)
-        cover = round(it.current_qty / upd, 1) if upd > 0 else None
+        evidence = evidence_by_id[it.id]
+        supported = evidence["reorder_eligible"]
         out.append({
             "id": it.id, "name": it.name, "base_unit": it.base_unit,
             "current_qty": round(it.current_qty, 2),
             "min_qty": it.min_qty, "par_qty": it.par_qty,
-            "usage_per_day": round(upd, 3),
-            "days_of_cover": cover,
-            "below_min": it.min_qty > 0 and it.current_qty <= it.min_qty,
-            "below_par": it.par_qty > 0 and it.current_qty < it.par_qty,
-            "suggested_order": round(max(0.0, it.par_qty - it.current_qty), 2)
-                               if it.par_qty > 0 else 0,
+            "usage_per_day": evidence["velocity_per_day"],
+            "days_of_cover": evidence["days_of_cover"],
+            "below_min": (evidence["risk"] in ("at_or_below_minimum", "stockout_risk"))
+                         if supported else None,
+            "below_par": evidence["risk"] == "below_par" if supported else None,
+            "suggested_order": evidence["reorder_recommendation_qty"],
+            "intelligence_confidence": evidence["confidence"],
         })
-    out.sort(key=lambda x: (x["below_min"] is not None and not x["below_min"],
+    out.sort(key=lambda x: (x["below_min"] is not True,
                             x["days_of_cover"] if x["days_of_cover"] is not None else 999))
     return {"items": out,
             "below_min_count": sum(1 for x in out if x["below_min"]),
@@ -377,6 +572,7 @@ def start_count(outlet_id: int, business_date: str | None = None,
                 user: User = Depends(current_user), db: Session = Depends(get_db)):
     assert_outlet_access(db, user, outlet_id)
     bd = business_date or now_local().date().isoformat()
+    assert_month_open(db, outlet_id, bd)
     existing = (db.query(StockCount)
                   .filter_by(outlet_id=outlet_id, business_date=bd,
                              status="draft").first())
@@ -417,6 +613,51 @@ def get_count(count_id: int, user: User = Depends(current_user),
     }
 
 
+@router.get("/counts")
+def count_history(outlet_id: int, start: str, end: str,
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Immutable physical-versus-system facts captured when each count closed."""
+    assert_outlet_access(db, user, outlet_id)
+    counts = (db.query(StockCount)
+                .filter(StockCount.outlet_id == outlet_id, StockCount.status == "done",
+                        StockCount.business_date >= start, StockCount.business_date <= end)
+                .order_by(StockCount.business_date.desc(), StockCount.id.desc()).all())
+    item_map = {item.id: item for item in db.query(StockItem)
+                .filter(StockItem.outlet_id == outlet_id).all()}
+    purchase_costs = (db.query(StockMovement)
+                        .filter(StockMovement.outlet_id == outlet_id,
+                                StockMovement.type == "purchase")
+                        .order_by(StockMovement.business_date.desc(), StockMovement.id.desc()).all())
+    result = []
+    for count in counts:
+        costs = {}
+        for movement in purchase_costs:
+            if movement.business_date <= count.business_date:
+                costs.setdefault(movement.stock_item_id, movement.unit_cost_paise)
+        lines = []
+        for line in db.query(StockCountLine).filter_by(count_id=count.id).all():
+            item = item_map.get(line.stock_item_id)
+            if item is None or line.counted_qty is None:
+                continue
+            variance_qty = round(line.counted_qty - line.system_qty, 3)
+            unit_cost = costs.get(line.stock_item_id, 0)
+            lines.append({
+                "stock_item_id": item.id, "name": item.name, "base_unit": item.base_unit,
+                "theoretical_qty": round(line.system_qty, 3),
+                "physical_qty": round(line.counted_qty, 3),
+                "variance_qty": variance_qty,
+                "variance_percent": round(variance_qty / line.system_qty * 100, 1)
+                if line.system_qty else None,
+                "unit_cost_paise": unit_cost,
+                "variance_value_paise": round(variance_qty * unit_cost),
+            })
+        result.append({
+            "id": count.id, "date": count.business_date, "lines": lines,
+            "variance_value_paise": sum(line["variance_value_paise"] for line in lines),
+        })
+    return {"counts": result}
+
+
 @router.post("/count/{count_id}/done")
 def finish_count(count_id: int, body: CountDoneIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -425,6 +666,7 @@ def finish_count(count_id: int, body: CountDoneIn,
         raise HTTPException(404, "Not found")
     assert_outlet_access(db, user, sc.outlet_id)
     check_edit_window(sc.business_date, user, db)
+    assert_month_open(db, sc.outlet_id, sc.business_date)
     if sc.status != "draft":
         raise HTTPException(409, "Count is already finalized")
     expected_ids = {
@@ -491,39 +733,14 @@ def finish_count(count_id: int, body: CountDoneIn,
 def order_list(outlet_id: int, user: User = Depends(current_user),
                db: Session = Depends(get_db)):
     assert_outlet_access(db, user, outlet_id)
-    items = (db.query(StockItem)
-               .filter_by(outlet_id=outlet_id, is_active=True)
-               .order_by(StockItem.name).all())
-    usage = _usage_per_day(db, outlet_id)
-    last_vendor = {}
-    for m in (db.query(StockMovement)
-                .filter_by(outlet_id=outlet_id, type="purchase")
-                .order_by(StockMovement.id.desc()).all()):
-        last_vendor.setdefault(m.stock_item_id, m.ref_expense_id)
-    eids = [v for v in last_vendor.values() if v]
-    exps = {e.id: e for e in db.query(Expense).filter(
-        Expense.id.in_(eids or [0]))}
-    vens = {v.id: v.name for v in db.query(Vendor).all()}
-    out = []
-    for it in items:
-        if it.par_qty <= 0:
-            continue
-        suggested = round(max(0.0, it.par_qty - it.current_qty), 2)
-        if suggested <= 0:
-            continue
-        upd = usage.get(it.id, 0)
-        eid = last_vendor.get(it.id)
-        vendor = vens.get(exps[eid].vendor_id) if eid in exps and exps[eid].vendor_id else None
-        out.append({
-            "item": it.name, "base_unit": it.base_unit,
-            "current_qty": round(it.current_qty, 2), "par_qty": it.par_qty,
-            "suggested_order": suggested,
-            "days_of_cover": round(it.current_qty / upd, 1) if upd > 0 else None,
-            "last_vendor": vendor,
-        })
-    out.sort(key=lambda x: (x["days_of_cover"] is not None,
-                            x["days_of_cover"] if x["days_of_cover"] is not None else 999))
-    return out
+    evidence = build_inventory_intelligence(db, outlet_id, None, None)
+    return [{
+        "id": row["stock_item_id"], "item": row["item"], "base_unit": row["base_unit"],
+        "current_qty": row["current_qty"], "par_qty": row["par_qty"],
+        "suggested_order": row["reorder_recommendation_qty"],
+        "days_of_cover": row["days_of_cover"], "last_vendor": None,
+    } for row in evidence["items"] if row["reorder_eligible"]
+    and (row["reorder_recommendation_qty"] or 0) > 0]
 
 
 # ── auto-recipe learning ──────────────────────────────────────────────────
@@ -768,56 +985,12 @@ def usage(start: str, end: str, outlet_id: int,
 def dish_profitability(start: str, end: str, outlet_id: int | None = None,
                        user: User = Depends(current_user),
                        db: Session = Depends(get_db)):
-    """Menu price − Σ(auto-learned ingredient cost) per dish.
-
-    outlet_id is optional, as it is on every other analytics endpoint: the
-    Analytics page leaves it out while "All outlets" is selected, and this
-    was the one handler that answered that with a 422.
-    """
+    """Deprecated compatibility view of evidence-gated menu costing."""
+    from ..util import analytics_date_range
+    lo, hi = analytics_date_range(start, end)
     if outlet_id is not None:
         assert_outlet_access(db, user, outlet_id)
         ids = [outlet_id]
     else:
         ids = user_outlet_ids(db, user)
-
-    links = (db.query(StockLink)
-               .filter(StockLink.outlet_id.in_(ids),
-                       StockLink.status == "confirmed").all())
-    last_cost = {}
-    for m in (db.query(StockMovement)
-                .filter(StockMovement.outlet_id.in_(ids),
-                        StockMovement.type == "purchase")
-                .order_by(StockMovement.id.desc()).all()):
-        last_cost.setdefault(m.stock_item_id, m.unit_cost_paise)
-    cost_by_dish: dict[str, int] = {}
-    for l in links:
-        cost_by_dish[l.menu_item_name] = \
-            cost_by_dish.get(l.menu_item_name, 0) + \
-            int(round(l.coefficient * last_cost.get(l.stock_item_id, 0)))
-
-    rows = (db.query(SalesItem)
-               .filter(SalesItem.outlet_id.in_(ids))
-               .filter(SalesItem.business_date >= start,
-                       SalesItem.business_date <= end).all())
-    agg: dict[str, dict] = {}
-    for r in rows:
-        a = agg.setdefault(r.item_name, {"qty": 0.0, "rev": 0})
-        a["qty"] += r.qty
-        a["rev"] += r.amount_paise
-    out = []
-    for name, a in agg.items():
-        cost_p = cost_by_dish.get(name)
-        price = a["rev"] / a["qty"] / 100 if a["qty"] else 0
-        margin_pct = None if cost_p is None or price <= 0 \
-            else round((price - cost_p / 100) / price * 100, 1)
-        out.append({
-            "item": name, "qty": round(a["qty"], 1),
-            "revenue_rupees": round(a["rev"] / 100, 2),
-            "est_cost_rupees": round(cost_p / 100, 2) if cost_p is not None else None,
-            "margin_rupees": round(
-                (a["rev"] - (cost_p or 0) * a["qty"]) / 100, 2
-            ),
-            "margin_percent": margin_pct,
-            "has_recipe": cost_p is not None,
-        })
-    return sorted(out, key=lambda x: -(x["margin_rupees"]))
+    return menu_engineering(db, ids, lo, hi)["items"]

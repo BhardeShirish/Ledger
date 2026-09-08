@@ -60,7 +60,11 @@ describe("SpendReview", () => {
     mocks.get.mockImplementation((p: string) =>
       Promise.resolve(p.startsWith("/advisor")
         ? REVIEW : { configured: true, model: "gemini-2.0-flash" }));
-    mocks.post.mockResolvedValue({ text: "Cut vegetables.", model: "gemini-2.0-flash" });
+    mocks.post.mockResolvedValue({
+      text: "Cut vegetables.", model: "gemini-2.0-flash",
+      selected_finding_indexes: [0],
+      findings: REVIEW.findings,
+    });
     renderReview();
 
     const btn = await screen.findByRole("button", { name: /Explain this in words/ });
@@ -70,7 +74,12 @@ describe("SpendReview", () => {
     await waitFor(() => expect(screen.getByText("Cut vegetables.")).toBeInTheDocument());
     expect(mocks.post).toHaveBeenCalledWith("/advisor/advice",
       { month: "2025-08", outlet_id: 1 });
-    expect(screen.getByText(/no bills, no names/)).toBeInTheDocument();
+    expect(screen.getByText(/aggregate totals, recording coverage, and non-identifying operational themes/)).toBeInTheDocument();
+    expect(screen.getByText("AI priority brief")).toBeInTheDocument();
+    expect(screen.getByText(/server-generated source for counts and amounts/))
+      .toBeInTheDocument();
+    expect(screen.getByText("Deterministic findings from your books")).toBeInTheDocument();
+    expect(screen.getByText("Highlighted deterministic findings")).toBeInTheDocument();
   });
 
   it("shows the server's reason when the AI call fails", async () => {

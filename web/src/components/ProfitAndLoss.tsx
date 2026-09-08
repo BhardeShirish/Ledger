@@ -118,6 +118,16 @@ export function ProfitAndLoss({ month, outletId }: {
   });
   const d = q.data;
   const findings: Finding[] = d?.findings ?? [];
+  const hasSales = (d?.sales?.net_rupees ?? d?.sales?.total_rupees ?? 0) > 0;
+  // A manual daily total can prove revenue but cannot prove how many bills
+  // made it. Prefer the explicit new contract, while accepting older servers.
+  const billDetailsAvailable = d?.sales?.bill_metrics_available ??
+    d?.sales?.bill_details_available ??
+    d?.sales?.has_bill_details ?? d?.sales?.bills_known ??
+    (d?.per_bill?.bills != null && d?.per_bill?.net_rupees != null);
+  const perBillKnown = billDetailsAvailable && d?.per_bill?.profit_rupees != null;
+  const sensitivity = billDetailsAvailable ? (d?.sensitivity ?? []) :
+    (d?.sensitivity ?? []).filter((s: any) => !/bill|average/i.test(`${s.lever} ${s.how}`));
 
   return (
     <Card className="space-y-4 p-4">
@@ -136,7 +146,7 @@ export function ProfitAndLoss({ month, outletId }: {
       )}
       {q.isError && <ErrorNote msg="Couldn't work out this month's costs." />}
 
-      {d && d.sales.bills === 0 ? (
+      {d && !hasSales ? (
         <p className="py-4 text-sm text-ink-faint">
           No sales recorded for this month yet.
         </p>
@@ -198,15 +208,23 @@ export function ProfitAndLoss({ month, outletId }: {
               <>
                 <Stat label="Left over" value={money(d.totals.profit_rupees)}
                       hint={`${d.totals.profit_percent_of_net}% of net sales`} />
-                <Stat label="Per bill"
-                      value={money(d.per_bill.profit_rupees ?? 0)}
-                      hint={`from a ${money(d.per_bill.net_rupees)} average bill`} />
-                <Stat label="Break even"
-                      value={d.breakeven.possible
-                        ? `${d.breakeven.bills_per_day} bills/day` : "—"}
-                      hint={d.breakeven.possible
-                        ? `you serve ${d.breakeven.actual_bills_per_day} a day`
-                        : d.breakeven.why} />
+                {perBillKnown ? (
+                  <>
+                    <Stat label="Per bill"
+                          value={money(d.per_bill.profit_rupees)}
+                          hint={`from a ${money(d.per_bill.net_rupees)} average bill`} />
+                    <Stat label="Break even"
+                          value={d.breakeven.possible
+                            ? `${d.breakeven.bills_per_day} bills/day` : "—"}
+                          hint={d.breakeven.possible
+                            ? `you serve ${d.breakeven.actual_bills_per_day} a day`
+                            : d.breakeven.why} />
+                  </>
+                ) : (
+                  <div className="sm:col-span-2">
+                    <Unknown why="Per-bill and break-even figures need bill-level sales details. Daily sales totals do not provide a bill count." />
+                  </div>
+                )}
               </>
             ) : (
               <div className="sm:col-span-3">
@@ -221,7 +239,7 @@ export function ProfitAndLoss({ month, outletId }: {
                 What each move is worth
               </p>
               <ul className="mt-1 space-y-1.5">
-                {d.sensitivity.map((s: any) => (
+                {sensitivity.map((s: any) => (
                   <li key={s.lever} className="text-sm">
                     <div className="flex justify-between gap-2">
                       <span>{s.lever}</span>

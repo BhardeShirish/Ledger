@@ -11,7 +11,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.db import SessionLocal
-from app.models import Employee, Expense, ExpenseCategory, SalesBill
+from app.models import Employee, Expense, ExpenseCategory, SalesBill, SalesDaily
 
 MONTH = "2026-04"                       # a whole, safely past month
 DAYS = 30
@@ -120,6 +120,40 @@ def test_ratios_are_measured_on_net_sales_not_on_the_taxed_total(healthy):
 
 def test_the_tax_collected_is_reported_separately(healthy):
     assert _pnl(healthy)["sales"]["tax_paise"] == 1500000
+
+
+def test_manual_daily_sales_count_but_do_not_invent_bill_metrics(client):
+    with SessionLocal() as db:
+        db.add(SalesDaily(outlet_id=1, business_date=f"{MONTH}-01",
+                          channel_kind="cash", source="manual",
+                          amount_paise=125_000))
+        db.commit()
+    d = _pnl(client)
+    assert d["sales"]["net_rupees"] == 1250.0
+    assert d["sales"]["total_rupees"] == 1250.0
+    assert d["sales"]["bills"] is None
+    assert d["sales"]["bill_metrics_available"] is False
+    assert d["sales"]["avg_ticket_net_rupees"] is None
+    assert d["per_bill"]["bills"] is None
+    assert d["per_bill"]["net_rupees"] is None
+    assert d["breakeven"]["possible"] is False
+    assert "bill counts" in d["breakeven"]["why"]
+
+
+def test_pos_rollup_wins_over_manual_and_bill_rows_without_double_counting(client):
+    with SessionLocal() as db:
+        db.add(SalesDaily(outlet_id=1, business_date=f"{MONTH}-01",
+                          channel_kind="cash", source="manual",
+                          amount_paise=10_000))
+        db.add(SalesDaily(outlet_id=1, business_date=f"{MONTH}-01",
+                          channel_kind="cash", source="petpooja", bills=1,
+                          net_paise=45_000, total_paise=50_000))
+        _sell(db, net=450, tax=50, day=1)
+        db.commit()
+    d = _pnl(client)
+    assert d["sales"]["net_rupees"] == 450.0
+    assert d["sales"]["total_rupees"] == 500.0
+    assert d["sales"]["bills"] == 1
 
 
 # ── the bands ───────────────────────────────────────────────────────────────
