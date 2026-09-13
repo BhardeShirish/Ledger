@@ -6,7 +6,6 @@ server/tests/.tmp*/
 server/data/
 data/
 web/node_modules/
-web/dist/
 web/.pytest_cache/
 web/tsconfig.tsbuildinfo
 .env

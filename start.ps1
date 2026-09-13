@@ -1,5 +1,5 @@
 # Ledger — Windows launcher
-# Usage:  .\start.ps1          → build (if needed) + serve on http://localhost:8080
+# Usage:  .\start.ps1          → serve on http://localhost:8080
 #         .\start.ps1 -Rebuild → force-rebuild the web bundle first
 #         .\start.ps1 -Lan     → also listen on the network so a phone can reach it
 param(
@@ -99,13 +99,10 @@ if (-not $python) {
 
 $distIndex = Join-Path $dist "index.html"
 $srcDir = Join-Path $web "src"
-# An installed PC receives only the built bundle - no sources, no Node.js.
-# Only a machine that still has the sources can (or needs to) rebuild.
+# A GitHub checkout now includes the built bundle too, so a new PC never needs
+# Node.js just because checkout timestamps make source files look newer.
 if (Test-Path $srcDir) {
-    $latestSource = Get-ChildItem $srcDir -Recurse -File |
-        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-    $manifest = Join-Path $web "package-lock.json"
-    $needsBuild = $Rebuild -or -not (Test-Path $distIndex) -or ($latestSource -and $latestSource.LastWriteTimeUtc -gt (Get-Item $distIndex).LastWriteTimeUtc) -or ((Test-Path $manifest) -and (Get-Item $manifest).LastWriteTimeUtc -gt (Get-Item $distIndex).LastWriteTimeUtc)
+    $needsBuild = $Rebuild -or -not (Test-Path $distIndex)
 } else {
     if (-not (Test-Path $distIndex)) {
         throw "The web bundle is missing and there are no sources to build it from. Reinstall Ledger from its ZIP."
@@ -120,7 +117,11 @@ if ($needsBuild) {
     Push-Location $web
     try {
         if (-not (Test-Path "node_modules") -or $Rebuild) {
-            npm ci --no-audit --no-fund
+            if (Test-Path "package-lock.json") {
+                npm ci --no-audit --no-fund
+            } else {
+                npm install --no-audit --no-fund
+            }
         }
         npm run build
     } finally {

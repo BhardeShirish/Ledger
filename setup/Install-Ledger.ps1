@@ -219,14 +219,14 @@ $Source = if ($packageOk) { $appFolders[0] } else { $null }
 if ($Source) {
     $needed = @("server\requirements.txt", "server\app\main.py", "web\dist\index.html", "start.ps1")
     $missing = $needed | Where-Object { -not (Test-Path (Join-Path $Source $_)) }
+    $completenessName = if ($sourceCheckout) { "Built web screen is available" } else { "Package is complete" }
     $packageFix = if ($sourceCheckout -and $missing -contains "web\dist\index.html") {
-        "This is source code, not an install package. On the working Ledger PC, " +
-        "run setup\Create-Package.cmd and choose 3. Transfer the resulting " +
-        "Ledger-New-PC.zip, extract it, then run its top-level Install-Ledger.cmd."
+        "Update or re-download this Ledger checkout. It must include web\dist " +
+        "before it can be installed."
     } else {
         "This ZIP is incomplete. Get a fresh copy of the package."
     }
-    Check "Package is complete" ($missing.Count -eq 0) `
+    Check $completenessName ($missing.Count -eq 0) `
         $(if ($missing) { "missing: $($missing -join ', ')" } else { "all program files present" }) `
         $packageFix
 }

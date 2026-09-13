@@ -202,17 +202,24 @@ on the sign-in screen and in the browser tab.
 
 #### Installing a fresh Ledger from GitHub
 
-Do **not** use **Code → Download ZIP**: that is source code and deliberately
-has no built `web\dist` screen bundle. Instead:
+The GitHub checkout now includes the built `web\dist` screen bundle, so a new
+PC can install directly from the latest pull or **Code → Download ZIP**:
+
+1. Extract the GitHub ZIP with Windows **Extract All** (or pull the latest
+   `main` branch).
+2. Open the extracted `Ledger` folder.
+3. Double-click `setup\Install-Ledger.cmd`.
+
+Alternatively, download the smaller prebuilt package from GitHub Actions:
 
 1. Open [Actions → Build Windows install package](../../actions/workflows/build-windows-install.yml).
-2. Open the newest successful run for `main`.
-3. Under **Artifacts**, download **Ledger-Fresh-Install**.
-4. Extract it with Windows **Extract All**, then double-click the top-level
+2. Open the newest successful run for `main`, then download
+   **Ledger-Fresh-Install** under **Artifacts**.
+3. Extract it with Windows **Extract All**, then double-click the top-level
    `Install-Ledger.cmd` beside the `Ledger` folder.
 
-This package is a brand-new, empty Ledger. It contains no restaurant records,
-receipt images, passwords, or login keys.
+Both paths create a brand-new, empty Ledger. They contain no restaurant
+records, receipt images, passwords, or login keys.
 
 #### Moving an existing Ledger to a new PC
 
