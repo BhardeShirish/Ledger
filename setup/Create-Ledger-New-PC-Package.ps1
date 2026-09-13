@@ -228,7 +228,7 @@ This ZIP contains no records, no uploads and no login key.
 Ledger on THIS PC was not stopped and is unaffected.
 On the other PC, use Extract All, then double-click the top-level
 Install-Ledger.cmd beside the Ledger folder.
-It will ask you to choose a new owner password.
+It will ask you to create a new owner username and password.
 "@
 } else {
 @"

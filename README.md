@@ -234,7 +234,8 @@ write access, and whether port 8080 is already taken. If a check fails it
 prints the problem and what to do, and stops without touching your PC.
 
 If every check passes it works out whether this is a first installation or an
-update. A first installation asks you to choose an owner password. An update
+update. A first installation asks you to create an owner username and password.
+An update
 backs the database up first, replaces only the program, and leaves your
 records, uploads and logins alone. Either way it registers Ledger to start when
 you sign in, waits until it is actually answering, and opens it in your browser.

@@ -431,17 +431,33 @@ foreach ($desktop in $desktops) {
     }
 }
 
-$ownerName = "owner"
+$ownerName = ""
 $createdLedger = $false
 if (-not (Test-Path $targetDb)) {
     $createdLedger = $true
     Write-Host ""
     Write-Host "A brand-new, empty ledger will be created." -ForegroundColor Cyan
+    $ownerName = if ($env:LEDGER_OWNER_USER) {
+        $env:LEDGER_OWNER_USER.Trim().ToLowerInvariant()
+    } else {
+        ""
+    }
+    while (-not $ownerName) {
+        $candidate = (Read-Host "New owner username (3-32 letters, numbers, . _ or -)").Trim().ToLowerInvariant()
+        if ($candidate -notmatch "^[a-z][a-z0-9._-]{2,31}$") {
+            Write-Host "Use 3-32 characters, beginning with a letter." -ForegroundColor Yellow
+            continue
+        }
+        $ownerName = $candidate
+    }
+    if ($ownerName -notmatch "^[a-z][a-z0-9._-]{2,31}$") {
+        throw "LEDGER_OWNER_USER must use 3-32 characters, beginning with a letter."
+    }
     $password = $env:LEDGER_OWNER_PASSWORD
     if ($password -and $password.Length -ge 12 -and $password -ne "change-me-please") {
         Write-Host "Using the owner password from LEDGER_OWNER_PASSWORD." -ForegroundColor Cyan
     } else {
-        Write-Host "Choose the owner password now. Write it down - it can be reset, but never recovered." -ForegroundColor Yellow
+        Write-Host "Choose the password for '$ownerName'. Write it down - it can be reset, but never recovered." -ForegroundColor Yellow
         while ($true) {
             $first = Read-Host "New owner password (at least 12 characters)" -AsSecureString
             $again = Read-Host "Type it again" -AsSecureString
@@ -479,12 +495,14 @@ finally:
 print(info.get("owner_username", "owner"))
 '@
     Write-Host "Creating the ledger..." -ForegroundColor Cyan
+    $env:LEDGER_OWNER_USER = $ownerName
     $env:LEDGER_OWNER_PASSWORD = $password
     try {
         $created = $firstRunCode | & $Python - (Join-Path $Target "server") (Join-Path $Target "server\data")
         if ($LASTEXITCODE -ne 0) { throw "The new Ledger database could not be created.`n$created" }
         $ownerName = ($created | Select-Object -Last 1).Trim()
     } finally {
+        Remove-Item Env:\LEDGER_OWNER_USER -ErrorAction SilentlyContinue
         Remove-Item Env:\LEDGER_OWNER_PASSWORD -ErrorAction SilentlyContinue
         $password = $null; $confirm = $null
     }
@@ -546,7 +564,7 @@ if ($createdLedger) {
     Write-Host @"
 Ledger is installed and running.
 
-  Sign in as "$ownerName" with the password you just chose.
+  Sign in as "$ownerName" with the password you just created.
   Open http://localhost:$Port in any browser.
   Ledger starts by itself whenever you sign in to Windows.
 "@ -ForegroundColor Green
