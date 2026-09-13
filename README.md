@@ -1,63 +1,54 @@
 # Ledger — The Counter Book
 
-One register for a small restaurant's back office: **daily sales, expenses,
-vendor khata, staff attendance with shifts, advances and payroll** — with
-Petpooja imports filling the money-in picture bill by bill.
-
-Built for Indian restaurant owners who currently run the shop out of a
-notebook and three WhatsApp groups. It runs on **one PC you own**, keeps every
-record in a single file you can copy, and needs no subscription and no
-internet. You can use it from your phone over your own private network.
+Ledger is the back office for one small restaurant, running on one PC you own.
+It holds the day together in a single register — sales, expenses, vendor khata,
+shift-aware attendance, advances, payroll, stock and purchasing — imports
+Petpooja bills and bank/PhonePe statements so money-in and money-out line up,
+and keeps every record in one file you can copy. No subscription, no internet
+needed, and it works from your phone over your own private network.
 
 **Licence: AGPL-3.0.** Free to use, modify and self-host, forever. If you run a
 modified copy as a service for other people, you must publish your changes.
 
-> Money is not a place for guesses. Where Ledger cannot be sure of a number it
-> says so rather than showing a confident green figure — a profit estimate
-> stays grey until payroll has actually been run, and "no problems found" is
-> never claimed for a month with nothing recorded in it.
+## Why Ledger
 
-## See it in action
+A shop running on a notebook and three WhatsApp groups does not lose money
+dramatically. It loses it quietly: a cash day counted from memory, an expense
+paid online and entered again from the bank statement, an advance nobody
+subtracted at payroll, stock ordered on a feeling, a month closed with a
+"profit" that never counted staff wages. By the time the pattern is visible the
+evidence is gone.
 
-These screenshots use Ledger's built-in fictional demo data. They contain no
-real restaurant, employee, supplier, or customer records.
+Ledger's job is to make the day's record complete enough to trust — and to say
+so plainly when it is not. Where it cannot be sure of a number it withholds it
+instead of showing a confident green figure: a profit estimate stays grey until
+payroll has actually been run, a reorder suggestion stays silent until purchase
+and count history supports it, and "no problems found" is never claimed for a
+month with nothing recorded in it.
 
-Each preview opens its original capture. Start with the day, act on the
-evidence, then inspect the wider business picture.
+## How a day works
 
-### Run the day from one checklist
+| Step | What happens | Why it matters |
+|---|---|---|
+| **1. Set up once** | Name the business, add staff, suppliers and stock items in **Settings**. | Everything later is attributed to a real person, vendor or item instead of a free-text note. |
+| **2. Attendance** | Mark who is in, on which shift, with lateness and overtime. | Attendance is what payroll, advances and labour cost are computed from — not a guess at month end. |
+| **3. Sales** | Enter channel totals, or import Petpooja bills; resolve split payments. | Bill-level imports make hourly and menu evidence possible; manual totals are kept honestly labelled as totals. |
+| **4. Spending** | Record expenses with vendor, category, mode and receipt — or import a bank/PhonePe statement. | Costs recorded the same day are what stop a month closing with an overstated profit. |
+| **5. Cash close** | Count the drawer against expected cash, move money to bank, note the difference. | A short drawer found today is a conversation; found next month it is only a number. |
 
-<p align="center">
-  <a href="docs/screenshots/01-home.png">
-    <img src="docs/screenshots/01-home.png" alt="Ledger daily operating checklist" width="1080">
-  </a>
-</p>
+An owner adds the parts a manager never sees — payroll, advances, salaries,
+month close/reopen, edit approvals beyond the 48-hour window, and data safety.
 
-### See what needs an owner's attention
+## See it
 
-<p align="center">
-  <a href="docs/screenshots/07-daily-brief.png">
-    <img src="docs/screenshots/07-daily-brief-overview.png" alt="Ledger owner intelligence brief" width="1080">
-  </a>
-</p>
-
-### Import a bank statement without booking it twice
-
-<p align="center">
-  <a href="docs/screenshots/13-statement-import-review.png">
-    <img src="docs/screenshots/13-statement-import-review-overview.png" alt="Ledger bank statement import review with duplicate and category checks" width="1080">
-  </a>
-</p>
-
-### Understand the month before making a decision
-
-<p align="center">
-  <a href="docs/screenshots/09-deep-analysis.png">
-    <img src="docs/screenshots/09-deep-analysis-overview.png" alt="Ledger deep restaurant analysis" width="1080">
-  </a>
-</p>
+These screenshots use Ledger's built-in fictional demo data — no real
+restaurant, employee, supplier or customer records. Select a preview to open the
+full capture.
 
 ### Get from an empty install to a first closed day
+
+Five guided steps, each ticked by records Ledger actually found rather than a
+"mark as done" button.
 
 <p align="center">
   <a href="docs/screenshots/14-getting-started.png">
@@ -65,7 +56,43 @@ evidence, then inspect the wider business picture.
   </a>
 </p>
 
+### Run the day from one checklist
+
+Attendance, sales, expenses and cash close in one loop, with missed days shown
+as catch-up work instead of silent zeroes.
+
+<p align="center">
+  <a href="docs/screenshots/01-home.png">
+    <img src="docs/screenshots/01-home.png" alt="Ledger daily operating checklist" width="1080">
+  </a>
+</p>
+
+### Import a bank statement without booking it twice
+
+Every payee is labelled ready, needs category, or check duplicate before
+anything is created, and the commit button names exactly what it will book.
+
+<p align="center">
+  <a href="docs/screenshots/13-statement-import-review.png">
+    <img src="docs/screenshots/13-statement-import-review-overview.png" alt="Ledger bank statement import review with duplicate and category checks" width="1080">
+  </a>
+</p>
+
+### See what needs an owner's attention
+
+A ranked brief where every finding carries its evidence, the days it covers, and
+a stated confidence level.
+
+<p align="center">
+  <a href="docs/screenshots/07-daily-brief.png">
+    <img src="docs/screenshots/07-daily-brief-overview.png" alt="Ledger owner intelligence brief" width="1080">
+  </a>
+</p>
+
 ### Keep the same daily loop on a phone
+
+The full operating loop on a touch layout that installs to the home screen and
+queues entries when the connection drops.
 
 <p align="center">
   <a href="docs/screenshots/12-mobile-home.png">
@@ -74,15 +101,72 @@ evidence, then inspect the wider business picture.
 </p>
 
 See the [full visual tour](docs/SCREENSHOTS.md) for expenses, cash close, bills
-and splits, inventory, purchasing, reports, staffing, and owner controls. Recent
-work is listed in the [changelog](CHANGELOG.md).
+and splits, inventory, purchasing, reports, staffing and owner controls.
+
+## What's newly strong
+
+- **A guide that cannot lie about your progress.** Getting started ticks a step
+  only when the matching records exist, so hiding it never loses progress.
+- **Bank and PhonePe statements you can trust to import once.** Money out is
+  grouped by payee, a hand-entered payment of the same date and amount is
+  flagged and excluded by default, and categories are only suggested when your
+  own past entries agree.
+- **Profit you are allowed to believe.** Month figures are backed by records or
+  withheld with the reason named, and month close lists its blockers instead of
+  rounding past them.
+- **Purchases that only cost you money when goods arrive.** A plan waits for
+  approval and an approved order waits for delivery; only a finalised receipt
+  moves stock, books the expense and raises the supplier liability.
+- **Bill history that stays fast as it grows.** Search and filter thousands of
+  imported bills paged from the server, with part-cash/part-online splits
+  surfaced as work to finish.
+- **Deletion insurance.** Verified recovery archives are written outside
+  Ledger's own folder, daily, with a restore helper that checks the archive
+  before it touches anything.
+
+Detailed changes are in the [changelog](CHANGELOG.md).
+
+## What it covers
+
+| Area | What it gives a restaurant owner |
+|---|---|
+| **Daily operation** | One checklist for attendance, sales, expenses and cash close, with catch-up prompts for missed days. |
+| **Sales capture** | Manual channel totals, Petpooja bill imports, server-paged bill search, split payments, refunds and losses. Manual totals are never presented as bill-level or hourly fact. |
+| **Expense capture** | Vendor, category, payment mode, receipt attachments, bulk line-item bills, and duplicate-checked bank/PhonePe statement import. |
+| **Cash and bank control** | Expected-versus-counted drawer cash, explicit money moved to bank, partial many-to-many reconciliation, statement credits kept separate from sales. |
+| **Purchasing and payables** | Draft, approve, cancel, receive and finalise orders; only a finalised receipt writes the expense, stock movement and liability. FIFO aging keeps settled bills off the overdue list. |
+| **Inventory and recipes** | Stock items, purchases, wastage, physical counts, variance history, confirmed ingredient links, theoretical consumption and evidence-gated reorder drafts. Forecasts never move stock by themselves. |
+| **People and payroll** | Shift-aware attendance, lateness and overtime, advances, transparent payroll drafts and finalised payroll controls. Staff planning uses timestamped bills and real attendance. |
+| **Reports and analysis** | Month P&L with cost-coverage warnings, break-even, budgets, forecast scenarios, trends, supplier price movement, labour productivity, menu engineering and service-period demand. |
+| **Owner intelligence** | A ranked Daily Brief with evidence, confidence, deep links, policy thresholds, resolution history, recurring-cost review, close-readiness exceptions, cash runway and system-health guidance. |
+| **Optional AI wording** | An owner-clicked brief can rephrase anonymous aggregate findings. It never receives names, figures, transactions, notes, dates, documents or links, and can never write or decide. |
+| **Safety and ownership** | Local SQLite storage, append-only audit history, month close/reopen controls, owner elevation for sensitive edits, offline queues for selected entries, verified backups, phone-friendly interface. |
+
+### The rules behind the numbers
+
+- **Financial truth first:** recorded expenses are not automatically all costs,
+  and sales minus recorded expenses is not called profit until coverage makes
+  that claim credible.
+- **Closed books stay closed:** financial writes to a closed month return a
+  clear lock error until an owner deliberately reopens that period.
+- **Evidence before advice:** missing recipes, count history, purchase cadence
+  or timestamped demand suppresses a recommendation instead of inventing it.
+- **Human approval stays in control:** AI is optional and advisory; purchase
+  approval, receiving, cash reconciliation, payroll and closing books always
+  require a person in Ledger.
+
+### Non-goals (by design)
+
+GST filing (CA-pack exports instead), customer-side khata, aggregator
+settlement reconciliation, biometric hardware, and multi-master sync between
+two PCs that are both taking entries.
 
 ---
 
 ## Try it in five minutes
 
 You do not have to enter real data to look around. Start with a demo ledger
-full of sample records:
+full of sample records.
 
 **Docker** (any OS):
 
@@ -100,12 +184,11 @@ $env:LEDGER_DEMO_SEED = "1"
 .\start.ps1
 ```
 
-Then sign in as `owner` with `demo-ledger-password`. The demo data is created
+Open <http://localhost:8080> and sign in as `owner` with the password you set
+(`demo-ledger-password` for the Windows commands above). Demo data is created
 only on a new database; do not set `LEDGER_DEMO_SEED` for a real restaurant.
-
-Either way, open <http://localhost:8080> and sign in as `owner` with the
-password you set. Remove the `LEDGER_DEMO_SEED` line and start from an empty
-database when you are ready for real records.
+Remove that line and start from an empty database when you are ready for real
+records.
 
 On first use, **My restaurant** is a neutral placeholder. Open
 **Settings → Business, money & region** to name the business; that name appears
@@ -119,21 +202,19 @@ on the sign-in screen and in the browser tab.
 
 One script does everything: `Install-Ledger.cmd`. Double-click it.
 
-It checks the whole machine before it changes anything — 64-bit Windows, a
-usable Python (and whether python.org is reachable if there is none), free
-disk space, write access, and whether port 8080 is already taken. If any
-check fails it prints the problem and what to do about it, and stops without
-touching your PC.
+It checks the machine before it changes anything — 64-bit Windows, a usable
+Python (and whether python.org is reachable if there is none), free disk space,
+write access, and whether port 8080 is already taken. If a check fails it
+prints the problem and what to do, and stops without touching your PC.
 
-If every check passes it works out for itself whether this is a first
-installation or an update. A first installation asks you to choose an owner
-password. An update backs the database up first, replaces only the program,
-and leaves your records, uploads and logins alone. Either way it registers
-Ledger to start when you sign in, waits until it is actually answering, and
-opens it in your browser.
+If every check passes it works out whether this is a first installation or an
+update. A first installation asks you to choose an owner password. An update
+backs the database up first, replaces only the program, and leaves your
+records, uploads and logins alone. Either way it registers Ledger to start when
+you sign in, waits until it is actually answering, and opens it in your browser.
 
-Once installed, these are double-clickable too, because Windows blocks
-double-clicked PowerShell files:
+These are double-clickable too, because Windows blocks double-clicked
+PowerShell files:
 
 | I want to… | Double-click |
 |---|---|
@@ -145,14 +226,13 @@ double-clicked PowerShell files:
 From a terminal: `.\start.ps1`, `.\stop.ps1`, and
 `.\setup\Create-Ledger-New-PC-Package.ps1` with `-Update` or `-Fresh`.
 
-Your records live in `%LOCALAPPDATA%\Ledger\server\data`, separate from
-the program, so an update never touches them. To back Ledger up, copy that
-folder.
+Your records live in `%LOCALAPPDATA%\Ledger\server\data`, separate from the
+program, so an update never touches them. To back Ledger up, copy that folder.
 
 ### Docker (Linux, macOS, Windows, or a NAS)
 
-Docker is the only thing you need — no Node, no Python, no build tools, and
-no need to clone this repository. Pick a strong password and run:
+Docker is the only thing you need — no Node, no Python, no build tools, and no
+need to clone this repository. Pick a strong password and run:
 
 ```bash
 docker run -d --name ledger \
@@ -212,8 +292,8 @@ loud restart loop than a box on the internet with a weak password.
 
 The interface is fully responsive — a bottom tab bar, a hidden sidebar, and
 touch-sized controls — and it installs to the home screen as an app. There is
-no separate Ledger mobile client; private remote access uses the VPN
-companion described below.
+no separate Ledger mobile client; private remote access uses the VPN companion
+described below.
 
 **It must be served over HTTPS.** This is not a preference. Browsers only grant
 offline storage and installability to a *secure context*, so a plain
@@ -380,42 +460,6 @@ advisory rather than a public issue.
 
 ---
 
-## What Ledger does
-
-| Area | What it gives a restaurant owner |
-|---|---|
-| **Daily operation** | A single checklist for attendance, sales, expenses, and cash close; catch-up prompts make missed days visible instead of silently treating them as zero. |
-| **Sales and expense capture** | Manual channel totals, Petpooja bill imports, split payments, refunds and losses, receipt attachments, vendor selection, and bulk line-item bills. Manual totals are never misrepresented as bill-level or hourly facts. |
-| **Cash and bank control** | Expected-versus-counted drawer cash, explicit money moved to bank, partial many-to-many bank reconciliation, and clear separation between statement credits and sales. |
-| **Purchasing and payables** | Draft, approve, cancel, receive, and finalize purchase orders. Only a finalized receipt writes an expense, stock movement, and supplier liability; FIFO payable aging prevents already-settled old bills being shown as overdue. |
-| **Inventory and recipes** | Stock items, purchases, wastage, physical counts, count-variance history, confirmed ingredient links, theoretical recipe consumption, and evidence-gated reorder drafts. Recipe forecasts never change stock automatically. |
-| **People and payroll** | Shift-aware attendance, lateness and overtime, staff advances, transparent payroll drafts, and finalized payroll controls. Staff planning uses timestamped bills and actual attendance, never manual sales totals. |
-| **Reports and analysis** | Month P&L, cost coverage warnings, break-even, budgets, forecast scenarios, sales/expense trends, supplier price movement, labour productivity, menu engineering, and service-period demand evidence. |
-| **Owner intelligence** | A ranked Daily Brief with deterministic evidence, confidence, deep links, policy thresholds, resolution history, recurring-cost reviews, close-readiness exceptions, conservative cash-flow runway, and system-health/restore guidance. |
-| **Optional AI wording** | An owner-clicked priority brief can rephrase anonymous aggregate findings. It never receives names, figures, transactions, notes, dates, documents, or links, and it can never make writes or financial decisions. |
-| **Safety and ownership** | Local SQLite storage, append-only audit history, explicit month close/reopen controls, owner elevation for sensitive changes, offline-safe queues for selected entries, backups, and a responsive phone-friendly interface. |
-
-### How the key rules work
-
-- **Financial truth first:** recorded expenses are not automatically all costs,
-  and sales minus recorded expenses is not called profit until coverage makes
-  that claim credible.
-- **Closed books stay closed:** financial writes to a closed month return a
-  clear lock error until an owner deliberately reopens that period.
-- **Evidence before advice:** missing recipes, count history, purchase cadence,
-  or timestamped demand suppresses a recommendation instead of inventing it.
-- **Human approval stays in control:** AI is optional and advisory; purchase
-  approval, receiving, cash reconciliation, payroll, and closing books always
-  require a person in Ledger.
-
-## Non-goals (by design)
-
-GST filing (CA-pack exports instead), customer-side khata, aggregator
-settlement reconciliation, biometric hardware, and multi-master sync between
-two PCs that are both taking entries.
-
----
-
 ## Contributing
 
 ```bash
@@ -438,5 +482,3 @@ Two house rules, both learned the hard way:
    purpose, see the new test go red, then put the code back.
 2. **Never show a confident number the data does not support.** If a figure is
    missing an input, name the input.
-
-Record what you changed in [`CHANGELOG.md`](CHANGELOG.md) under *Unreleased*.

@@ -1,22 +1,17 @@
 # Ledger visual tour
 
-Every capture below is from an isolated, fictional demo ledger seeded with
-invented staff, suppliers, bills, and bank lines. No real restaurant, person,
-supplier, customer, transaction, receipt, or credential appears anywhere in
-these images.
-
-Previews are sized for reading on GitHub. Select any image to open the complete
-capture at full resolution.
+Every capture is from an isolated, fictional demo ledger — invented staff,
+suppliers, bills and bank lines. No real restaurant, person, customer,
+transaction, receipt or credential appears anywhere. Select any image to open
+the full-resolution capture.
 
 ## Start here
 
 ### Getting started
 
-Five steps take a new install from empty to a first closed day: name the
-business, put people on shifts, record sales, record spending, count the cash.
-Each step is ticked by **records Ledger actually found** — there is no "mark as
-done" — so hiding the guide cannot lose progress, and a step that is still
-loading says *checking* rather than claiming the work is undone.
+Takes a new install from empty to a first closed day in five steps. Each step is
+ticked by records Ledger actually found, so progress cannot be faked or lost by
+hiding the guide.
 
 <p align="center">
   <a href="screenshots/14-getting-started.png">
@@ -28,8 +23,9 @@ loading says *checking* rather than claiming the work is undone.
 
 ### Daily checklist
 
-One clear daily loop for attendance, sales, expenses, and cash close. The guide
-collapses to a *Step N of 5* pill once you are working.
+One loop for attendance, sales, expenses and cash close, collapsing to a
+*Step N of 5* pill once you are working. Missed days appear as catch-up work
+rather than silent zeroes.
 
 <p align="center">
   <a href="screenshots/01-home.png">
@@ -39,9 +35,8 @@ collapses to a *Step N of 5* pill once you are working.
 
 ### Expense capture
 
-Record spending with vendor, category, and payment mode in one pass, with the
-recent history beside the form so a duplicate entry is visible before it is
-made.
+Vendor, category, payment mode and receipt in one pass. Recent history sits
+beside the form so a duplicate is visible before it is entered.
 
 <p align="center">
   <a href="screenshots/02-expenses.png">
@@ -51,10 +46,9 @@ made.
 
 ### Cash close
 
-Opening float, cash sales, cash expenses, and advances add up to one expected
-drawer figure. Bills that were paid part cash and part online are shown as an
-explicit unknown (`? ₹1,890`) instead of being guessed into the drawer.
-[Open the complete cash-close screen.](screenshots/03-cash-close.png)
+Shows whether the drawer matches the day, on the day. Part-cash/part-online
+bills are held as an explicit unknown (`? ₹1,890`) instead of being guessed into
+the cash figure. [Full screen.](screenshots/03-cash-close.png)
 
 <p align="center">
   <a href="screenshots/03-cash-close.png">
@@ -66,14 +60,12 @@ explicit unknown (`? ₹1,890`) instead of being guessed into the drawer.
 
 ### Bank / PhonePe statement review
 
-Upload a statement and Ledger groups money out by who was paid, then labels
-every payee before anything is booked: **ready**, **needs category**, or
-**check duplicate** when a payment of the same date and amount was already
-entered by hand. Duplicates are excluded by default. Categories come from your
-own history — a suggestion appears only when past entries for that payee agree
-— and a confirmed payee can be remembered for next time. The commit button
-names exactly how many expenses will be created and for how much.
-[Open the complete import-review screen.](screenshots/13-statement-import-review.png)
+Turns a statement into expenses without double-booking: every payee is labelled
+**ready**, **needs category**, or **check duplicate** when a payment of the same
+date and amount was already entered by hand, and duplicates are excluded by
+default. Categories are suggested only where your own past entries agree, and
+the commit button names how many expenses it will create and for how much.
+[Full screen.](screenshots/13-statement-import-review.png)
 
 <p align="center">
   <a href="screenshots/13-statement-import-review.png">
@@ -83,11 +75,10 @@ names exactly how many expenses will be created and for how much.
 
 ### Bills & history
 
-Every imported bill is searchable and paged from the server, with filters by
-date and payment type and an honest *Showing X–Y of Z*. Bills paid across two
-methods are surfaced as work to do: the split must be allocated across channels
-and must add up to the bill total exactly.
-[Open the complete bills screen.](screenshots/15-bills.png)
+Find any imported bill by date or payment type, paged from the server with an
+honest *Showing X–Y of Z*. Split-payment bills are surfaced as work to finish —
+the allocation must add up to the bill total exactly.
+[Full screen.](screenshots/15-bills.png)
 
 <p align="center">
   <a href="screenshots/15-bills.png">
@@ -99,8 +90,8 @@ and must add up to the bill total exactly.
 
 ### Inventory
 
-Quantity, usage, and food cost in one place — and a count of items whose
-evidence is being **withheld** rather than dressed up as safe stock.
+Quantity, usage and food cost in one place. Items whose evidence is too thin are
+counted as **withheld** rather than dressed up as safe stock.
 
 <p align="center">
   <a href="screenshots/04-inventory.png">
@@ -110,8 +101,8 @@ evidence is being **withheld** rather than dressed up as safe stock.
 
 ### Reorder evidence
 
-A reorder recommendation appears only when the recorded inputs support it.
-Everything else is listed as missing data to fix, not as a silent "healthy".
+Tells you what to buy only when recorded purchases and counts support it.
+Everything else is listed as missing data to fix, never as a silent "healthy".
 
 <p align="center">
   <a href="screenshots/05-reorder.png">
@@ -121,8 +112,8 @@ Everything else is listed as missing data to fix, not as a silent "healthy".
 
 ### Purchase controls
 
-A plan waits for approval, an approved order waits for goods, and **only a
-finalized receipt** moves stock, creates the expense, and raises the supplier
+Keeps ordering, approving and receiving as separate decisions. Only a
+**finalized receipt** moves stock, creates the expense and raises the supplier
 liability.
 
 <p align="center">
@@ -135,9 +126,10 @@ liability.
 
 ### Daily brief
 
-Ranked owner actions, each with the evidence behind it, the days it covers, and
-a stated confidence level. Repeated findings collapse into one decision instead
-of a month of identical rows. [Open the complete daily brief.](screenshots/07-daily-brief.png)
+Ranks what actually needs the owner today, each item carrying its evidence, the
+days it covers and a stated confidence. Repeated findings collapse into one
+decision instead of a month of identical rows.
+[Full screen.](screenshots/07-daily-brief.png)
 
 <p align="center">
   <a href="screenshots/07-daily-brief.png">
@@ -147,11 +139,10 @@ of a month of identical rows. [Open the complete daily brief.](screenshots/07-da
 
 ### Monthly reports
 
-Month close lists its blockers by name — unreconciled cash, an unclosed drawer,
-an unresolved payment split — and a month can only be closed over them with a
-written explanation. Profit is withheld, with the reason, whenever the cost side
-is not complete enough to state one.
-[Open the complete monthly-reports screen.](screenshots/08-monthly-reports.png)
+Closes a month only with its blockers named — unreconciled cash, an open drawer,
+an unresolved split — and overriding them requires a written explanation. Profit
+is withheld, with the reason, whenever the cost side is too incomplete to state
+one. [Full screen.](screenshots/08-monthly-reports.png)
 
 <p align="center">
   <a href="screenshots/08-monthly-reports.png">
@@ -161,11 +152,11 @@ is not complete enough to state one.
 
 ### Deep analysis
 
-Sales, cost, supplier, demand, menu, and labour evidence lead to ranked next
-actions — *Act on this*, *Check this*, *Record this* — each with the arithmetic
-shown and a **Before you act** note naming the innocent explanation (a bulk buy,
-a double entry, a closed day) before you chase a trend.
-[Open the complete deep-analysis screen.](screenshots/09-deep-analysis.png)
+Turns sales, cost, supplier, demand, menu and labour evidence into ranked next
+actions — *Act on this*, *Check this*, *Record this* — with the arithmetic
+shown. A **Before you act** note names the innocent explanation (a bulk buy, a
+double entry, a closed day) before you chase a trend.
+[Full screen.](screenshots/09-deep-analysis.png)
 
 <p align="center">
   <a href="screenshots/09-deep-analysis.png">
@@ -175,9 +166,9 @@ a double entry, a closed day) before you chase a trend.
 
 ### Staffing
 
-Coverage, labour effectiveness, and observed service periods. Suggestions are
-explicitly *review candidates, never a generated roster or a judgement about a
-person*, and are withheld when no repeatable pattern clears the evidence bar.
+Shows coverage, labour effectiveness and observed service periods. Suggestions
+are review candidates only — never a generated roster or a judgement about a
+person — and are withheld when no repeatable pattern clears the evidence bar.
 
 <p align="center">
   <a href="screenshots/10-staffing.png">
@@ -189,10 +180,10 @@ person*, and are withheld when no repeatable pattern clears the evidence bar.
 
 ### Owner controls
 
-Per-outlet policies, edit windows, and data safety in one place: where the
+Per-outlet policies, edit windows and data safety in one place. It names where
 verified recovery copies are written (outside Ledger's own folder), when the
-last one completed, and a one-click download of the full archive.
-[Open the complete owner-controls screen.](screenshots/11-owner-controls.png)
+last one completed, and offers a one-click download of the full archive.
+[Full screen.](screenshots/11-owner-controls.png)
 
 <p align="center">
   <a href="screenshots/11-owner-controls.png">
@@ -204,8 +195,8 @@ last one completed, and a one-click download of the full archive.
 
 ### Daily checklist
 
-The operating loop stays focused during service, with a five-tab bottom bar and
-touch targets sized for a busy counter.
+Lets an owner run the same loop away from the counter, with a five-tab bottom
+bar and touch targets sized for service hours.
 
 <p align="center">
   <a href="screenshots/12-mobile-home.png">
@@ -215,8 +206,8 @@ touch targets sized for a busy counter.
 
 ### Expenses on the floor
 
-Spending is captured where it happens. Writes are queued if the connection drops
-and retried with an idempotency key, so a flaky network cannot book the same
+Captures spending where it happens. A dropped connection queues the write and
+retries it with an idempotency key, so a flaky network cannot book the same
 expense twice.
 
 <p align="center">

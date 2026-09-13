@@ -42,17 +42,17 @@ export function guideSteps(isOwner: boolean): GuideStepDef[] {
   const first: GuideStepDef = isOwner
     ? {
       key: "business",
-      title: "Name the business and this outlet",
-      why: "Every report, export and bill you hand over carries these two names, and the outlet decides which set of books an entry lands in.",
-      evidence: "Counts as done when the business name and this outlet's name are your own, not the ones Ledger ships with.",
-      links: [{ to: "/settings", label: "Business & outlet settings" }],
+      title: "Set up the business and outlet",
+      why: "These names appear on every report and export.",
+      evidence: "Ledger checks that neither name is still a default.",
+      links: [{ to: "/settings", label: "Set up business" }],
       routes: ["/settings"],
     }
     : {
       key: "account",
-      title: "Put your own name on this login",
-      why: "Your name is what the app header and the owner's user list show, so the entries you save can be told apart from anyone else's.",
-      evidence: "Counts as done when this account has a full name of its own, not the login id.",
+      title: "Add your name to this login",
+      why: "It makes your saved work identifiable.",
+      evidence: "Ledger checks that it is more than the login id.",
       links: [{ to: "/settings/account", label: "Your account" }],
       routes: ["/settings/account"],
     };
@@ -61,11 +61,11 @@ export function guideSteps(isOwner: boolean): GuideStepDef[] {
     first,
     {
       key: "team",
-      title: "Add your people and put them on shifts",
+      title: "Add people and assign shifts",
       why: isOwner
-        ? "Attendance, payroll and the shift board all read this one list, and nothing can be planned until someone sits on a shift."
-        : "Attendance and the shift board read this one list. Only the owner can add a person, so check it and ask for anyone missing.",
-      evidence: "Counts as done when this outlet has at least one working person, at least one shift exists, and at least one person is on a shift — a default shift or a weekly pattern.",
+        ? "Attendance, payroll and planning start here."
+        : "Attendance and the shift board use this list. Ask the owner to add anyone missing.",
+      evidence: "Ledger checks for a working person, live shift and assignment.",
       links: [
         { to: "/staff/people", label: "People list" },
         { to: "/staff/shifts", label: "Shift board" },
@@ -74,9 +74,9 @@ export function guideSteps(isOwner: boolean): GuideStepDef[] {
     },
     {
       key: "sales",
-      title: "Record today's sales",
-      why: "Profit, the analytics and the cash you should be holding tonight are all built from the day's sales sheet.",
-      evidence: "Counts as done when today's sheet holds a typed amount or a POS import. Either one is enough.",
+      title: "Record today’s sales",
+      why: "Sales drive cash, reports and every next action.",
+      evidence: "Ledger checks for a saved total or POS import.",
       links: [
         { to: "/sales", label: "Today's sales sheet" },
         ...(isOwner ? [{ to: "/sales/import", label: "Import from POS" }] : []),
@@ -85,17 +85,17 @@ export function guideSteps(isOwner: boolean): GuideStepDef[] {
     },
     {
       key: "expenses",
-      title: "Record what you spent today",
-      why: "Money paid out is what turns takings into real profit, and cash payouts are what the drawer has to account for tonight.",
-      evidence: "Counts as done when at least one expense is filed under today's date. If nothing was spent, this step stays open — Ledger will not claim an entry that is not there.",
+      title: "Record today’s spending",
+      why: "It makes profit and the cash count credible.",
+      evidence: "Ledger checks for an expense dated today.",
       links: [{ to: "/money/expenses", label: "Expenses" }],
       routes: ["/money/expenses"],
     },
     {
       key: "close",
-      title: "Count the cash and close the day",
-      why: "Closing compares the drawer against what today's sales and payouts say should be in it. It is the check that catches a mistake tonight instead of next month.",
-      evidence: "Counts as done when today's closure exists and has not been reopened.",
+      title: "Count cash and close the day",
+      why: "Catch a drawer mistake today, not next month.",
+      evidence: "Ledger checks for a final close.",
       links: [{ to: "/money/cash", label: "Cash & close day" }],
       routes: ["/money/cash"],
     },
@@ -129,7 +129,7 @@ const SHIPPED_OUTLET_NAME = "main outlet";
 
 const UNREADABLE: StepCheck = {
   state: "checking",
-  detail: "Ledger's answer for this check could not be read, so nothing is claimed either way.",
+  detail: "Ledger could not check this yet.",
 };
 
 /**
@@ -143,7 +143,7 @@ export function settle(sources: Source[], compute: () => StepCheck): StepCheck {
   if (sources.some((s) => s.isError)) {
     return {
       state: "checking",
-      detail: "Ledger did not answer this check. It runs again when you come back to this screen.",
+      detail: "Ledger could not check this. Try again when you are back online.",
     };
   }
   if (sources.some((s) => s.isPending)) {
@@ -240,7 +240,7 @@ export function checkTodaysSales(sheet: unknown): StepCheck {
   if (typed.length === 0 && imported.length === 0) {
     return {
       state: "incomplete",
-      detail: "Today's sheet is empty — no amount typed in and no POS import.",
+      detail: "No sales saved for today.",
     };
   }
   const bills = imported.reduce(
@@ -265,7 +265,7 @@ export function checkTodaysExpenses(payload: unknown): StepCheck {
   if (!isRecord(payload)) return UNREADABLE;
   const filed = num(payload.total) ?? records(payload.rows).length;
   if (filed <= 0) {
-    return { state: "incomplete", detail: "No expense is filed under today's date yet." };
+    return { state: "incomplete", detail: "No expense saved for today." };
   }
   return {
     state: "verified",
@@ -282,14 +282,14 @@ export function checkDayClose(day: unknown): StepCheck {
     return {
       state: "incomplete",
       detail: expected === null
-        ? "Today is not closed yet."
-        : `Today is not closed yet — Ledger expects ${inr(expected)} in the drawer.`,
+        ? "Today is still open."
+        : `Day still open — Ledger expects ${inr(expected)} in the drawer.`,
     };
   }
   if (closure.reopened === true) {
     return {
       state: "incomplete",
-      detail: "Today's close was reopened, so it is no longer final. Count and close again.",
+      detail: "The close was reopened. Count and close again.",
     };
   }
   const counted = num(closure.counted_paise);
@@ -681,8 +681,8 @@ export default function OnboardingGuide({
             <span className="num">{progress}</span>
             {" · "}
             {complete
-              ? "checked against your records"
-              : "checked against your records, never ticked off by hand"}
+              ? "all checks passed"
+              : "Ledger checks saved records"}
           </p>
         </div>
         <button
@@ -770,8 +770,8 @@ export default function OnboardingGuide({
       <div className="border-t border-rule px-3 pb-2 pt-2">
         <p className="text-xs leading-relaxed text-ink-faint">
           {complete
-            ? "Nothing is stored as progress. Reopen Guide any time and it reads the records again."
-            : "Hiding it loses nothing: Guide in the header brings it back at this step."}
+            ? "Guide reads the records again whenever you reopen it."
+            : "Hide it safely — Guide resumes here."}
         </p>
         <div className="flex items-center justify-between gap-2">
           <Button

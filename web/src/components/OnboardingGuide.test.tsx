@@ -113,7 +113,7 @@ function renderLayout(initialEntries = ["/"]) {
 const guide = () => screen.queryByRole("region", { name: "Getting started" });
 const pill = () => screen.queryByRole("button", { name: /^Getting started guide, / });
 const helpButton = () => screen.getByRole("button", { name: "Getting started guide" });
-const progressLine = () => within(guide()!).getByText(/checked against your records/).textContent;
+const progressLine = () => within(guide()!).getByText(/Ledger checks saved records|all checks passed/).textContent;
 const step = (name: RegExp) => within(guide()!).getByRole("button", { name });
 const openGuide = async () => {
   await waitFor(() => expect(guide()).not.toBeNull());
@@ -268,7 +268,7 @@ describe("today's sales check", () => {
     expect(checkTodaysSales({ all_rows: [{ channel_kind: "cash", manual_amount_rupees: null, imported: null }], total_rupees: 0 }))
       .toEqual({
         state: "incomplete",
-        detail: "Today's sheet is empty — no amount typed in and no POS import.",
+        detail: "No sales saved for today.",
       });
   });
 
@@ -282,7 +282,7 @@ describe("today's sales check", () => {
 describe("today's expenses check", () => {
   it("needs a real entry filed under today", () => {
     expect(checkTodaysExpenses({ total: 0, rows: [] }))
-      .toEqual({ state: "incomplete", detail: "No expense is filed under today's date yet." });
+      .toEqual({ state: "incomplete", detail: "No expense saved for today." });
     expect(checkTodaysExpenses({ total: 3, rows: [{ id: 1 }] }))
       .toEqual({ state: "verified", detail: "3 expenses filed for today." });
     expect(checkTodaysExpenses({ rows: [{ id: 1 }] }).detail).toBe("1 expense filed for today.");
@@ -294,12 +294,12 @@ describe("cash close check", () => {
   it("holds the day open until a closure exists and stands", () => {
     expect(checkDayClose({ closure: null, expected_paise: 125000 })).toEqual({
       state: "incomplete",
-      detail: "Today is not closed yet — Ledger expects ₹1,250 in the drawer.",
+      detail: "Day still open — Ledger expects ₹1,250 in the drawer.",
     });
-    expect(checkDayClose({ closure: null }).detail).toBe("Today is not closed yet.");
+    expect(checkDayClose({ closure: null }).detail).toBe("Today is still open.");
     expect(checkDayClose({ closure: { id: 4, reopened: true } })).toEqual({
       state: "incomplete",
-      detail: "Today's close was reopened, so it is no longer final. Count and close again.",
+      detail: "The close was reopened. Count and close again.",
     });
   });
 
@@ -322,10 +322,10 @@ describe("loading and failure are not answers", () => {
     expect(settle([{ isPending: true }], compute))
       .toEqual({ state: "checking", detail: "Checking your records…" });
     expect(settle([{ isError: true }], compute).detail)
-      .toBe("Ledger did not answer this check. It runs again when you come back to this screen.");
+      .toBe("Ledger could not check this. Try again when you are back online.");
     // A failure outranks a pending sibling: it is the one worth explaining.
     expect(settle([{ isPending: true }, { isError: true }], compute).detail)
-      .toMatch(/did not answer/);
+      .toMatch(/could not check/);
     expect(settle([{ isPending: false }], compute).state).toBe("verified");
   });
 });
@@ -419,10 +419,10 @@ describe("guide in the app shell", () => {
     expect(document.body).toHaveFocus();
 
     await waitFor(() => expect(progressLine()).toMatch(/Step 3 of 5/));
-    expect(step(/Name the business and this outlet/)).toHaveTextContent("done");
-    expect(step(/Add your people/)).toHaveTextContent("done");
-    expect(step(/Record today's sales/)).toHaveAttribute("aria-expanded", "true");
-    expect(within(panel).getByText(/Today's sheet is empty/)).toBeInTheDocument();
+    expect(step(/Set up the business and outlet/)).toHaveTextContent("done");
+    expect(step(/Add people and assign shifts/)).toHaveTextContent("done");
+    expect(step(/Record today’s sales/)).toHaveAttribute("aria-expanded", "true");
+    expect(within(panel).getByText("No sales saved for today.")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: /I have done this|Mark .*done/i }))
       .toBeNull();
   });
@@ -434,7 +434,7 @@ describe("guide in the app shell", () => {
     renderLayout();
     await openGuide();
     await waitFor(() => expect(progressLine()).toMatch(/Step 3 of 5/));
-    expect(within(guide()!).getByText(/Today's sheet is empty/)).toBeInTheDocument();
+    expect(within(guide()!).getByText("No sales saved for today.")).toBeInTheDocument();
   });
 
   it("stays with the person across the route change instead of disappearing", async () => {
@@ -451,7 +451,7 @@ describe("guide in the app shell", () => {
     expect(guide()).toBeNull();
     const collapsed = pill()!;
     expect(collapsed).toHaveAccessibleName(
-      "Getting started guide, step 3 of 5: Record today's sales",
+      "Getting started guide, step 3 of 5: Record today’s sales",
     );
     expect(collapsed).toHaveTextContent("Step 3 of 5");
     expect(localStorage.getItem(GUIDE_STORAGE_KEY)).toBeNull();
@@ -461,7 +461,7 @@ describe("guide in the app shell", () => {
 
     await user.click(collapsed);
     expect(guide()).toHaveFocus();
-    expect(step(/Record today's sales/)).toHaveAttribute("aria-expanded", "true");
+    expect(step(/Record today’s sales/)).toHaveAttribute("aria-expanded", "true");
   });
 
   it("does not remember an automatic route collapse as a user preference", async () => {
@@ -487,7 +487,7 @@ describe("guide in the app shell", () => {
     await screen.findByText("sales day sheet");
     await user.click(pill()!);
     expect(progressLine()).toMatch(/Step 3 of 5/);
-    expect(step(/Record today's sales/)).toHaveTextContent("not done yet");
+    expect(step(/Record today’s sales/)).toHaveTextContent("not done yet");
   });
 
   it("advances only once the day's records catch up", async () => {
@@ -509,9 +509,9 @@ describe("guide in the app shell", () => {
 
     await user.click(pill()!);
     expect(progressLine()).toMatch(/Step 4 of 5/);
-    expect(step(/Record today's sales/)).toHaveTextContent("done");
-    expect(step(/Record what you spent today/)).toHaveAttribute("aria-expanded", "true");
-    await user.click(step(/Record today's sales/));
+    expect(step(/Record today’s sales/)).toHaveTextContent("done");
+    expect(step(/Record today’s spending/)).toHaveAttribute("aria-expanded", "true");
+    await user.click(step(/Record today’s sales/));
     expect(within(guide()!).getByText("₹4,200 on today's sheet, from 1 typed amount."))
       .toBeInTheDocument();
   });
@@ -520,9 +520,9 @@ describe("guide in the app shell", () => {
     failing.add("sheet");
     renderLayout();
     await openGuide();
-    await waitFor(() => expect(within(guide()!).getByText(/did not answer this check/))
+    await waitFor(() => expect(within(guide()!).getByText(/could not check this/))
       .toBeInTheDocument());
-    expect(step(/Record today's sales/)).toHaveTextContent("still being checked");
+    expect(step(/Record today’s sales/)).toHaveTextContent("still being checked");
   });
 
   it("comes back at the same step after being hidden, with nothing lost", async () => {
@@ -543,7 +543,7 @@ describe("guide in the app shell", () => {
 
     await user.click(helpButton());
     await waitFor(() => expect(progressLine()).toMatch(/Step 3 of 5/));
-    expect(step(/Record today's sales/)).toHaveAttribute("aria-expanded", "true");
+    expect(step(/Record today’s sales/)).toHaveAttribute("aria-expanded", "true");
     expect(helpButton()).toHaveAttribute("aria-expanded", "true");
   });
 
@@ -580,7 +580,7 @@ describe("guide in the app shell", () => {
     await user.keyboard("{Escape}");
     expect(guide()).not.toBeNull();
 
-    await user.click(step(/Record today's sales/));
+    await user.click(step(/Record today’s sales/));
     await user.keyboard("{Escape}");
     expect(guide()).toBeNull();
     expect(pill()).toHaveFocus();
@@ -594,13 +594,13 @@ describe("guide in the app shell", () => {
     renderLayout();
     const panel = await openGuide();
     await waitFor(() => expect(progressLine()).toMatch(/Step 1 of 5/));
-    expect(step(/Put your own name on this login/)).toHaveAttribute("aria-expanded", "true");
+    expect(step(/Add your name to this login/)).toHaveAttribute("aria-expanded", "true");
     expect(within(panel).getByText(/This login still shows only as “ravi”/))
       .toBeInTheDocument();
     expect(within(panel).getByRole("link", { name: /Your account/ }))
       .toHaveAttribute("href", "/settings/account");
 
-    await userEvent.click(step(/Record today's sales/));
+    await userEvent.click(step(/Record today’s sales/));
     expect(within(panel).getByRole("link", { name: /Today's sales sheet/ })).toBeInTheDocument();
     expect(within(panel).queryByRole("link", { name: /Import from POS/ })).toBeNull();
     expect(within(panel).queryByRole("link", { name: /Business & outlet settings/ })).toBeNull();
