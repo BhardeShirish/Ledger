@@ -21,6 +21,12 @@ from .db import get_db
 from .models import AuthSession, User
 
 
+LOCKOUT_MESSAGE = (
+    f"Account temporarily locked. Try again in {LOCKOUT_MINUTES} minute"
+    f"{'' if LOCKOUT_MINUTES == 1 else 's'}."
+)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -158,7 +164,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if user is None or not user.is_active:
         raise HTTPException(401, "Account disabled")
     if _future(user.locked_until):
-        raise HTTPException(423, "Account temporarily locked. Try later.")
+        raise HTTPException(423, LOCKOUT_MESSAGE)
     request.state.auth_session = session
     user._auth_session = session
     return user
@@ -231,6 +237,10 @@ def register_failed_login(user: User, db: Session) -> None:
 
 def clear_lock(user: User, db: Session) -> None:
     if _future(user.locked_until):
-        raise HTTPException(423, "Account temporarily locked. Try later.")
+        policy_until = _utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        if user.locked_until > policy_until:
+            user.locked_until = policy_until
+            db.commit()
+        raise HTTPException(423, LOCKOUT_MESSAGE)
     user.locked_until = None
     db.commit()

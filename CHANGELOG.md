@@ -189,7 +189,7 @@ version number and no release date because there has not been a release.
   12-character code (grouped 4-4-4, ambiguous characters excluded) to
   `password-reset.txt` in Ledger's own data folder; the API response never
   contains it. Codes last **15 minutes**, allow **5 attempts**, require a new
-  password of at least **12 characters**, and on success clear any login lockout
+  password of at least **8 characters**, and on success clear any login lockout
   and revoke every other session. An unknown username behaves identically to a
   real one from the client's point of view.
 - **Verified recovery archives.** The daily database backup is taken through

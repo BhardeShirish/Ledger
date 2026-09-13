@@ -5,10 +5,15 @@ who can reach the login page must gain nothing, and someone who can read
 the Ledger PC's data folder must be able to get back in. Everything below
 is one of those two sentences.
 """
+from datetime import timedelta
+
 from fastapi.testclient import TestClient
 
+from app.db import SessionLocal
 from app.main import app
+from app.models import User
 from app.password_reset import forget_all, reset_file
+from app.security import _utcnow
 from tests.conftest import login
 
 
@@ -54,8 +59,10 @@ def test_reset_clears_a_lockout(client):
     for _ in range(6):
         stranger.post("/api/auth/login",
                       json={"username": "owner", "password": "wrong-one"})
-    assert stranger.post("/api/auth/login", json={
-        "username": "owner", "password": "change-me-please"}).status_code == 423
+    locked = stranger.post("/api/auth/login", json={
+        "username": "owner", "password": "change-me-please"})
+    assert locked.status_code == 423
+    assert locked.json()["detail"] == "Account temporarily locked. Try again in 1 minute."
 
     ask(client)
     assert client.post("/api/auth/reset", json={
@@ -63,6 +70,22 @@ def test_reset_clears_a_lockout(client):
         "new_password": "unlocked-again-now"}).status_code == 200
     assert stranger.post("/api/auth/login", json={
         "username": "owner", "password": "unlocked-again-now"}).status_code == 200
+
+
+def test_an_old_long_lock_is_reduced_to_the_current_policy(client):
+    with SessionLocal() as db:
+        owner = db.query(User).filter_by(username="owner").one()
+        owner.locked_until = _utcnow() + timedelta(minutes=10)
+        db.commit()
+
+    locked = TestClient(app).post("/api/auth/login", json={
+        "username": "owner", "password": "change-me-please"})
+    assert locked.status_code == 423
+    assert locked.json()["detail"] == "Account temporarily locked. Try again in 1 minute."
+
+    with SessionLocal() as db:
+        owner = db.query(User).filter_by(username="owner").one()
+        assert owner.locked_until <= _utcnow() + timedelta(minutes=1, seconds=2)
 
 
 def test_guessing_the_code_is_not_worth_trying(client):
