@@ -184,11 +184,11 @@ function ForgotPassword({ username, onCancel, onDone }: {
                onChange={(e) => setPassword(e.target.value)} />
       </Field>
       <p className="text-xs text-ink-faint">
-        At least 12 characters. Everyone signed in elsewhere will be signed out.
+        At least 8 characters. Everyone signed in elsewhere will be signed out.
       </p>
       <ErrorNote msg={err} />
       <Button size="lg" className="w-full"
-              disabled={busy || !code.trim() || password.length < 12}>
+              disabled={busy || !code.trim() || password.length < 8}>
         {busy ? "Changing…" : "Set new password"}
       </Button>
       <button type="button" onClick={onCancel}

@@ -114,7 +114,7 @@ describe("forgotten password recovery", () => {
     await user.click(screen.getByRole("button", { name: "Forgot password?" }));
     await user.click(screen.getByRole("button", { name: "Write my reset code" }));
     await user.type(await screen.findByLabelText("Reset code"), "abcd-efgh-ijkl");
-    await user.type(screen.getByLabelText("New password"), "tooshort");
+    await user.type(screen.getByLabelText("New password"), "short77");
 
     expect(screen.getByRole("button", { name: "Set new password" })).toBeDisabled();
 

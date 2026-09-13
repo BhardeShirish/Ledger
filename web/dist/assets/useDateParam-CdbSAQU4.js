@@ -1,0 +1,1 @@
+import{a5 as u,r as c,t as o}from"./index-cYbkfYX0.js";function n(e){if(!/^\d{4}-\d{2}-\d{2}$/.test(e)||e>o())return!1;const[a,s,r]=e.split("-").map(Number),t=new Date(a,s-1,r);return t.getFullYear()===a&&t.getMonth()===s-1&&t.getDate()===r}function f(){const[e]=u(),[a,s]=c.useState(()=>{const t=e.get("date")??"";return n(t)?t:o()});return[a,t=>{n(t)&&s(t)}]}export{f as u};

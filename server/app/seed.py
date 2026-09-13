@@ -29,10 +29,10 @@ def bootstrap(db: Session) -> dict:
         username = os.environ.get("LEDGER_OWNER_USER", "owner")
         password = read_env_or_file("LEDGER_OWNER_PASSWORD")
         testing = os.environ.get("LEDGER_TESTING") == "1"
-        if len(password) < 12 or (password == "change-me-please" and not testing):
+        if len(password) < 8 or (password == "change-me-please" and not testing):
             raise RuntimeError(
-                "First run requires LEDGER_OWNER_PASSWORD with at least "
-                "12 characters and no default password."
+                "First run requires LEDGER_OWNER_PASSWORD with at least 8 "
+                "characters and no default password."
             )
         u = User(username=username.lower(), full_name="Owner", role="owner",
                  password_hash=hash_password(password))

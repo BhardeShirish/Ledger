@@ -58,9 +58,9 @@ class ResetIn(BaseModel):
     new_password: str
 
 
-# The installer asks for twelve, so recovery must not quietly accept less:
-# this path exists precisely for the account that owns every rupee.
-MIN_RESET_PASSWORD = 12
+# Every password path uses the same minimum: setup, recovery, and account
+# changes must never silently weaken one another.
+MIN_PASSWORD_LENGTH = 8
 
 
 def _user_payload(u: User, db: Session) -> dict:
@@ -126,9 +126,9 @@ def reset_password(body: ResetIn, request: Request, db: Session = Depends(get_db
     username = body.username.strip().lower()
     # Checked before the code is spent, so a weak password does not cost the
     # owner a second trip to the file.
-    if len(body.new_password) < MIN_RESET_PASSWORD:
+    if len(body.new_password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(
-            422, f"New password must be at least {MIN_RESET_PASSWORD} characters")
+            422, f"New password must be at least {MIN_PASSWORD_LENGTH} characters")
     if not verify_and_consume(username, body.code):
         raise HTTPException(401, "That code is wrong or has expired")
     u = db.query(User).filter_by(username=username).first()
@@ -191,8 +191,9 @@ def change_password(body: ChangePwIn, user: User = Depends(current_user),
                     db: Session = Depends(get_db)):
     if not verify_password(body.old_password, user.password_hash):
         raise HTTPException(401, "Current password is wrong")
-    if len(body.new_password) < 8:
-        raise HTTPException(422, "New password must be at least 8 characters")
+    if len(body.new_password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            422, f"New password must be at least {MIN_PASSWORD_LENGTH} characters")
     user.password_hash = hash_password(body.new_password)
     revoke_other_sessions(user, db)
     session = getattr(user, "_auth_session", None)

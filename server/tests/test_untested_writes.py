@@ -84,13 +84,19 @@ def test_changing_the_password_checks_the_old_one(client):
     short = client.post("/api/auth/change-password",
                         json={"old_password": "change-me-please", "new_password": "abc"})
     assert short.status_code == 422
+    assert short.json()["detail"] == "New password must be at least 8 characters"
+
+    seven = client.post("/api/auth/change-password",
+                        json={"old_password": "change-me-please", "new_password": "seven77"})
+    assert seven.status_code == 422
+    assert seven.json()["detail"] == "New password must be at least 8 characters"
 
     ok = client.post("/api/auth/change-password",
                      json={"old_password": "change-me-please",
-                           "new_password": "brand-new-pass"})
+                           "new_password": "eight888"})
     assert ok.status_code == 200, ok.text
     assert client.post("/api/auth/login",
-                       json={"username": "owner", "password": "brand-new-pass"}
+                       json={"username": "owner", "password": "eight888"}
                        ).status_code == 200
     assert client.post("/api/auth/login",
                        json={"username": "owner", "password": "change-me-please"}

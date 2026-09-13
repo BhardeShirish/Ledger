@@ -484,14 +484,14 @@ if (-not (Test-Path $targetDb)) {
     } else {
         Write-Host "Choose the password for '$ownerName'. Write it down - it can be reset, but never recovered." -ForegroundColor Yellow
         while ($true) {
-            $first = Read-Host "New owner password (at least 12 characters)" -AsSecureString
+            $first = Read-Host "New owner password (at least 8 characters)" -AsSecureString
             $again = Read-Host "Type it again" -AsSecureString
             $password  = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
                 [Runtime.InteropServices.Marshal]::SecureStringToBSTR($first))
             $confirm = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
                 [Runtime.InteropServices.Marshal]::SecureStringToBSTR($again))
             if ($password -ne $confirm)          { Write-Host "Those did not match. Try again." -ForegroundColor Yellow; continue }
-            if ($password.Length -lt 12)         { Write-Host "Too short - use at least 12 characters." -ForegroundColor Yellow; continue }
+            if ($password.Length -lt 8)          { Write-Host "Too short - use at least 8 characters." -ForegroundColor Yellow; continue }
             if ($password -eq "change-me-please"){ Write-Host "Please choose your own password." -ForegroundColor Yellow; continue }
             break
         }
