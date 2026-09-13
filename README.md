@@ -218,7 +218,7 @@ PowerShell files:
 
 | I want to… | Double-click |
 |---|---|
-| Install or update Ledger | `Install-Ledger.cmd` (inside the ZIP) |
+| Install or update Ledger | Top-level `Install-Ledger.cmd` (inside the ZIP) |
 | Start Ledger | `Start-Ledger.cmd` |
 | Stop Ledger | `Stop-Ledger.cmd` |
 | Build a package for another PC | `setup\Create-Package.cmd` |
@@ -416,7 +416,8 @@ comfortably exceeds the backup size.
 Run `.\setup\Create-Ledger-New-PC-Package.ps1` on the old PC. It stops Ledger,
 then builds `Ledger-New-PC.zip` with a consistent database snapshot, the
 receipts and the application. Transfer that ZIP privately, extract the whole
-of it on the new PC, and double-click `Install-Ledger.cmd`. Do not resume
+of it on the new PC, and double-click the top-level `Install-Ledger.cmd` beside
+the `Ledger` folder — not the similarly named file under `setup`. Do not resume
 entering data on the old PC afterwards; the two databases do not synchronise.
 
 `-Fresh` builds `Ledger-Fresh-Install.zip` instead, carrying no records at all.

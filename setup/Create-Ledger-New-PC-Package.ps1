@@ -31,6 +31,9 @@ function Copy-Tree([string]$Source, [string]$Destination, [string[]]$ExtraArgs =
     if ($LASTEXITCODE -ge 8) {
         throw "Could not copy '$Source' (robocopy exit code $LASTEXITCODE)."
     }
+    # Robocopy uses 1 for a successful copy with changes. Do not leak that
+    # success status as the package script's process exit code.
+    $global:LASTEXITCODE = 0
 }
 
 if (-not $Fresh -and -not $Update -and -not (Test-Path $sourceDb)) {

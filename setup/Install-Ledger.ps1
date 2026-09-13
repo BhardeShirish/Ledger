@@ -194,11 +194,20 @@ Check "Windows is 64-bit" ([Environment]::Is64BitOperatingSystem) `
 Check "PowerShell 5 or newer" ($PSVersionTable.PSVersion.Major -ge 5) `
     "found $($PSVersionTable.PSVersion)" "Update Windows, or install PowerShell 7."
 
-# The package must be extracted whole. Running the installer from inside a
-# ZIP viewer copies a folder that is missing most of the program.
-$appFolders = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter "run_ledger.py" `
-    -File -Recurse -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty DirectoryName -Unique)
+# A source checkout keeps this installer under setup\, while a move/update
+# package keeps it beside the Ledger payload. Support both layouts without
+# searching outside the extracted package.
+$parent = Split-Path -Parent $PSScriptRoot
+if ((Split-Path -Leaf $PSScriptRoot) -ieq "setup" -and
+    (Test-Path -LiteralPath (Join-Path $parent "run_ledger.py") -PathType Leaf)) {
+    $appFolders = @($parent)
+} else {
+    # The package must be extracted whole. Running the installer from inside a
+    # ZIP viewer copies a folder that is missing most of the program.
+    $appFolders = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter "run_ledger.py" `
+        -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty DirectoryName -Unique)
+}
 $packageOk = $appFolders.Count -eq 1
 Check "Package extracted correctly" $packageOk `
     $(if ($packageOk) { "found the Ledger folder" } else { "found $($appFolders.Count) Ledger folders" }) `
