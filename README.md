@@ -254,8 +254,11 @@ PowerShell files:
 From a terminal: `.\start.ps1`, `.\stop.ps1`, and
 `.\setup\Create-Ledger-New-PC-Package.ps1` with `-Update` or `-Fresh`.
 
-Your records live in `%LOCALAPPDATA%\Ledger\server\data`, separate from the
-program, so an update never touches them. To back Ledger up, copy that folder.
+Your installed Ledger records live in `%LOCALAPPDATA%\Ledger\server\data`,
+separate from the program, so an update never touches them. If you run
+`start.ps1` directly from a downloaded/source folder instead, its records live
+in that folder's `server\data`. To back Ledger up, copy the data folder used by
+the Ledger you run.
 
 #### Starting over on a PC
 
@@ -263,8 +266,10 @@ If this PC shows people, sales, or settings from an earlier Ledger, run
 `setup\Remove-Ledger-Data.cmd` from the downloaded Ledger folder. It lists
 what it found and requires you to type `ERASE` before it stops Ledger and
 permanently deletes its local records, uploads, login key, old installation
-copies, startup tasks, and Ledger recovery archives. The downloaded folder
-remains, ready for `setup\Install-Ledger.cmd`.
+copies, startup tasks, and Ledger recovery archives. If Ledger was run directly
+from the downloaded folder, it also removes that folder's `server\data` after
+stopping Ledger; the downloaded code remains, ready for
+`setup\Install-Ledger.cmd`.
 
 It does **not** delete unrelated files in a custom backup folder or uninstall
 NetBird/Caddy. Copy any records you intend to keep before confirming.

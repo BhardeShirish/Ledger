@@ -78,6 +78,18 @@ $legacyTarget = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
 $targets = @($defaultTarget, $legacyTarget)
 if ($env:LEDGER_HOME) { $targets += $env:LEDGER_HOME }
 $targets = @($targets | Select-Object -Unique)
+$launcherRoot = Split-Path -Parent $PSScriptRoot
+$launcherRootIsInstalled = $targets | Where-Object {
+    [IO.Path]::GetFullPath($_).TrimEnd("\") -eq
+    [IO.Path]::GetFullPath($launcherRoot).TrimEnd("\")
+} | Select-Object -First 1
+$sourceDataFolder = $null
+if (-not $launcherRootIsInstalled -and
+    (Test-Path -LiteralPath (Join-Path $launcherRoot "run_ledger.py") -PathType Leaf)) {
+    # Keep a downloaded checkout, but not the Ledger it created when run directly.
+    $sourceDataFolder = Join-Path $launcherRoot "server\data"
+}
+$sourceDataFolders = Get-ExistingDirectories @($sourceDataFolder)
 $oldCopies = @()
 foreach ($target in $targets) {
     $parent = Split-Path -Parent $target
@@ -112,6 +124,11 @@ Write-Host ""
 Write-Host "This permanently removes:" -ForegroundColor Yellow
 if ($installFolders) { $installFolders | ForEach-Object { Write-Host "  - $($_)" } }
 else { Write-Host "  - no installed Ledger folders were found" }
+if ($sourceDataFolders) {
+    $sourceDataFolders | ForEach-Object {
+        Write-Host "  - records in the downloaded Ledger folder at $($_)"
+    }
+}
 if ($recoveryDirectories) { $recoveryDirectories | ForEach-Object { Write-Host "  - Ledger recovery archives in $($_)" } }
 if (Test-Path -LiteralPath $remoteState) { Write-Host "  - $remoteState" }
 Write-Host "  - Ledger startup tasks and legacy desktop shortcuts"
@@ -141,8 +158,18 @@ foreach ($target in $targets) {
         if ($LASTEXITCODE -ne 0) { throw "Ledger at '$target' could not be stopped." }
     }
 }
+if ($sourceDataFolders) {
+    $stop = Join-Path $launcherRoot "stop.ps1"
+    if (Test-Path -LiteralPath $stop -PathType Leaf) {
+        & $stop
+        if ($LASTEXITCODE -ne 0) { throw "Ledger at '$launcherRoot' could not be stopped." }
+    }
+}
 
 foreach ($folder in $installFolders) {
+    Remove-Item -LiteralPath $folder -Recurse -Force
+}
+foreach ($folder in $sourceDataFolders) {
     Remove-Item -LiteralPath $folder -Recurse -Force
 }
 foreach ($directory in $recoveryDirectories) {
