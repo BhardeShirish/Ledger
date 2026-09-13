@@ -367,6 +367,19 @@ finally:
     foreach ($item in Get-ChildItem -LiteralPath $Source -File) {
         Copy-Item -LiteralPath $item.FullName -Destination $Target -Force
     }
+    # Updates previously copied only server/web and root files. Keep this an
+    # allowlist: remote-access state and unrelated setup files must not travel.
+    foreach ($relative in @("setup\Set-LedgerRemoteAccess.ps1",
+                            "setup\Test-LedgerRemoteAccess.ps1",
+                            "setup\Restore-LedgerBackup.ps1",
+                            "docs\REMOTE-ACCESS.md")) {
+        $sourceFile = Join-Path $Source $relative
+        if (Test-Path -LiteralPath $sourceFile -PathType Leaf) {
+            $destination = Join-Path $Target $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $sourceFile -Destination $destination -Force
+        }
+    }
 
     if ($hasRecords -and -not (Test-Path $targetDb)) {
         throw "The update removed the database. It has been kept at $rollback - do not run Ledger until this is looked at."

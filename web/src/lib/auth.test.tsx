@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider, useAuth } from "./auth";
@@ -71,5 +72,43 @@ describe("auth while offline", () => {
     await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("signed-out"));
     // No cached identity means no offline mode to announce.
     expect(screen.getByTestId("offline")).toHaveTextContent("online");
+  });
+});
+
+describe("step-up copy", () => {
+  function StepUpProbe({ reason }: { reason?: Parameters<
+    ReturnType<typeof useAuth>["requireStepUp"]>[0] }) {
+    const { requireStepUp } = useAuth();
+    return <button onClick={() => void requireStepUp(reason)}>unlock</button>;
+  }
+
+  const renderProbe = (reason?: any) => {
+    mocks.get.mockResolvedValue(OWNER);
+    return render(<AuthProvider><StepUpProbe reason={reason} /></AuthProvider>);
+  };
+
+  it("names the locked destination the caller asked about", async () => {
+    const user = userEvent.setup();
+    renderProbe({
+      title: "Payroll is owner-only",
+      heading: "Enter your password to open Monthly salaries",
+      body: "Unlocking only lists the months.",
+    });
+    await user.click(screen.getByRole("button", { name: "unlock" }));
+
+    expect(await screen.findByRole("dialog", { name: "Payroll is owner-only" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enter your password to open Monthly salaries" }))
+      .toBeInTheDocument();
+    expect(screen.getByText("Unlocking only lists the months.")).toBeInTheDocument();
+  });
+
+  it("falls back to the generic wording when a caller has none", async () => {
+    const user = userEvent.setup();
+    renderProbe();
+    await user.click(screen.getByRole("button", { name: "unlock" }));
+
+    expect(await screen.findByRole("dialog", { name: "Owner confirmation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enter your password to continue" }))
+      .toBeInTheDocument();
   });
 });

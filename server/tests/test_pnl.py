@@ -229,6 +229,22 @@ def test_no_profit_is_shown_while_costs_are_missing(client):
     assert d["per_bill"]["profit_rupees"] is None
 
 
+def test_dashboard_uses_the_same_completeness_gate_as_the_pnl(client):
+    """The report tiles and P&L must never disagree about whether profit exists."""
+    with SessionLocal() as db:
+        for day in range(1, DAYS + 1):
+            _sell(db, net=500, day=day, n=20)
+        _staff(db, 6, 11000)
+        db.commit()
+    pnl = _pnl(client)
+    dashboard = client.get("/api/stats/dashboard", params={"month": MONTH}).json()
+    assert pnl["profit_known"] is False
+    assert dashboard["profit_known"] is False
+    assert dashboard["profit_rupees"] is None
+    assert dashboard["missing_cost_groups"] == pnl["missing_cost_groups"]
+    assert dashboard["profit_unknown_reason"] == pnl["profit_unknown_reason"]
+
+
 def test_no_break_even_is_shown_while_costs_are_missing(client):
     """Break-even from fixed costs nobody entered always says you are
     comfortably clear, which is the most expensive lie available."""
@@ -487,7 +503,7 @@ def test_categories_carry_their_cost_group(client):
 
 def test_a_category_can_be_retagged(client):
     cat = _cats(client)["rent"]
-    r = client.patch(f"/api/lists/categories/{cat['id']}/group",
+    r = _elevate(client).patch(f"/api/lists/categories/{cat['id']}/group",
                      json={"cost_group": "admin"})
     assert r.status_code == 200, r.text
     assert _cats(client)["rent"]["cost_group"] == "admin"
@@ -495,9 +511,16 @@ def test_a_category_can_be_retagged(client):
 
 def test_a_nonsense_group_is_refused(client):
     cat = _cats(client)["rent"]
-    r = client.patch(f"/api/lists/categories/{cat['id']}/group",
+    r = _elevate(client).patch(f"/api/lists/categories/{cat['id']}/group",
                      json={"cost_group": "banana"})
     assert r.status_code == 422
+
+
+def test_only_an_elevated_owner_can_change_a_categorys_pnl_line(client, manager, fresh_owner):
+    cat = _cats(client)["rent"]
+    endpoint = f"/api/lists/categories/{cat['id']}/group"
+    assert manager.patch(endpoint, json={"cost_group": "admin"}).status_code == 403
+    assert fresh_owner.patch(endpoint, json={"cost_group": "admin"}).status_code == 428
 
 
 def test_the_group_list_is_offered_with_labels(client):

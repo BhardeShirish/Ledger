@@ -157,6 +157,33 @@ def test_an_inactive_cost_stops_posting_but_keeps_its_history(client, rent_cat):
     assert len(_expenses()) == before, "stopping must neither post nor delete"
 
 
+def test_restarting_a_cost_preserves_history_and_resumes_only_this_month(client, rent_cat):
+    created = _add(client, rent_cat, start_month="2026-01", end_month=None)
+    before = len(_expenses())
+    assert client.delete(f"/api/recurring/{created['id']}").status_code == 200
+    restarted = client.post(f"/api/recurring/{created['id']}/restart")
+    assert restarted.status_code == 200, restarted.text
+    data = restarted.json()
+    assert data["is_active"] is True
+    assert data["start_month"] == date.today().strftime("%Y-%m")
+    assert data["end_month"] is None
+    assert len(_expenses()) == before
+
+
+def test_multi_outlet_owner_must_choose_where_a_monthly_cost_belongs(client, rent_cat):
+    second = client.post("/api/outlets", json={"name": "Second outlet"}).json()
+    body = {"category_id": rent_cat, "name": "Second outlet rent",
+            "amount_rupees": 40000, "day_of_month": 1, "start_month": "2026-01"}
+    omitted = client.post("/api/recurring", json=body)
+    assert omitted.status_code == 422
+    assert "Choose an outlet" in omitted.json()["detail"]
+    selected = client.post("/api/recurring", json={**body, "outlet_id": second["id"]})
+    assert selected.status_code == 201, selected.text
+    assert selected.json()["outlet_id"] == second["id"]
+    scoped = client.get("/api/recurring", params={"outlet_id": second["id"]}).json()["items"]
+    assert [row["id"] for row in scoped] == [selected.json()["id"]]
+
+
 def test_editing_the_amount_does_not_rewrite_a_posted_month(client, rent_cat):
     r = _add(client, rent_cat, start_month="2026-01", end_month="2026-01")
     client.put(f"/api/recurring/{r['id']}", json={

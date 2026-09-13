@@ -83,3 +83,68 @@ describe("login workflow", () => {
     expect(result.violations).toEqual([]);
   });
 });
+
+describe("forgotten password recovery", () => {
+  it("sends the owner to a file on the PC and never shows the code", async () => {
+    const user = userEvent.setup();
+    mocks.post.mockResolvedValue({
+      ok: true,
+      file: "C:\\Ledger\\server\\data\\password-reset.txt",
+      expires_minutes: 15,
+    });
+    renderLogin();
+
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    await user.click(screen.getByRole("button", { name: "Write my reset code" }));
+
+    expect(mocks.post).toHaveBeenCalledWith("/auth/forgot", { username: "owner" });
+    expect(
+      await screen.findByText("C:\\Ledger\\server\\data\\password-reset.txt"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/valid for 15 minutes/i)).toBeInTheDocument();
+  });
+
+  it("will not submit a password too short to be accepted", async () => {
+    const user = userEvent.setup();
+    mocks.post.mockResolvedValue({
+      ok: true, file: "C:\\data\\password-reset.txt", expires_minutes: 15,
+    });
+    renderLogin();
+
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    await user.click(screen.getByRole("button", { name: "Write my reset code" }));
+    await user.type(await screen.findByLabelText("Reset code"), "abcd-efgh-ijkl");
+    await user.type(screen.getByLabelText("New password"), "tooshort");
+
+    expect(screen.getByRole("button", { name: "Set new password" })).toBeDisabled();
+
+    await user.type(screen.getByLabelText("New password"), "-but-not-now");
+    expect(screen.getByRole("button", { name: "Set new password" })).toBeEnabled();
+  });
+
+  it("returns to sign in once the password is changed", async () => {
+    const user = userEvent.setup();
+    mocks.post
+      .mockResolvedValueOnce({
+        ok: true, file: "C:\\data\\password-reset.txt", expires_minutes: 15,
+      })
+      .mockResolvedValueOnce({ ok: true });
+    renderLogin();
+
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    await user.click(screen.getByRole("button", { name: "Write my reset code" }));
+    await user.type(await screen.findByLabelText("Reset code"), "wxyz-1234-5678");
+    await user.type(screen.getByLabelText("New password"), "a-long-enough-one");
+    await user.click(screen.getByRole("button", { name: "Set new password" }));
+
+    expect(mocks.post).toHaveBeenLastCalledWith("/auth/reset", {
+      username: "owner",
+      code: "WXYZ-1234-5678",
+      new_password: "a-long-enough-one",
+    });
+    expect(
+      await screen.findByText("Password changed. Sign in with it now."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+});

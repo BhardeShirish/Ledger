@@ -11,6 +11,8 @@
 @layer base {
   html {
     -webkit-tap-highlight-color: transparent;
+    scroll-padding-top: 5rem;
+    scroll-padding-bottom: 6rem;
   }
   body {
     @apply bg-paper-2 text-ink font-sans antialiased;
@@ -20,6 +22,44 @@
   textarea,
   button {
     font: inherit;
+  }
+  button:disabled,
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  :focus-visible {
+    outline: 2px solid #C2410C;
+    outline-offset: 3px;
+  }
+  ::selection {
+    color: #1C1917;
+    background: theme("colors.accent.soft");
+  }
+  input,
+  textarea {
+    caret-color: #C2410C;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: #70665D;
+    opacity: 1;
+  }
+  a {
+    text-underline-offset: 0.2em;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    /* A still marked ring preserves loading feedback when motion is reduced. */
+    .spinner-mark {
+      animation: none !important;
+    }
   }
   /* iOS Safari zooms the whole page in when you focus a field smaller than
      16px, and never zooms back out. On a phone that turns every day-sheet
@@ -31,12 +71,20 @@
     input:not([type="checkbox"]):not([type="radio"]),
     select,
     textarea {
+      /* impeccable-disable-next-line design-system-font-size: documented iOS zoom safeguard */
       font-size: 16px !important;
     }
     /* Fingers are blunter than a mouse pointer: give every field a real
        44px target so a mistyped tap can't land on the row beneath. */
     input:not([type="checkbox"]):not([type="radio"]),
     select {
+      min-height: 2.75rem;
+    }
+    button,
+    nav a {
+      min-height: 2.75rem;
+    }
+    .outlet-identity {
       min-height: 2.75rem;
     }
   }
@@ -48,9 +96,36 @@
     @apply font-mono tabular-nums tracking-tight;
   }
   .label-caps {
-    @apply text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint;
+    @apply text-[11px] font-medium uppercase tracking-[0.12em] text-ink-soft;
   }
   .card {
-    @apply border border-rule bg-paper rounded-lg;
+    @apply min-w-0 rounded-lg border border-rule bg-paper;
+  }
+  .skip-link {
+    @apply fixed left-4 top-3 z-50 -translate-y-24 rounded-md bg-paper px-4 py-3 font-semibold text-accent focus:translate-y-0;
+  }
+  .app-main {
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+  }
+  .save-bar {
+    bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  .sheet-content {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+  @media (min-width: 768px) {
+    .app-main {
+      padding-bottom: 2.5rem;
+    }
+    .save-bar {
+      bottom: 0;
+    }
+  }
+}
+
+@layer utilities {
+  /* The original faint ink was below 3:1 on paper, even for field hints. */
+  .text-ink-faint {
+    color: #70665D;
   }
 }

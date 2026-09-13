@@ -7,6 +7,13 @@ from sqlalchemy.orm import Session
 from ..audit import audit
 from ..db import get_db
 from ..models import User
+from ..password_reset import (
+    MAX_RESET_ATTEMPTS,
+    RESET_TTL_MINUTES,
+    clear_reset_file,
+    request_reset,
+    verify_and_consume,
+)
 from ..security import (
     clear_lock,
     current_user,
@@ -39,6 +46,21 @@ class StepUpIn(BaseModel):
 class ChangePwIn(BaseModel):
     old_password: str
     new_password: str
+
+
+class ForgotIn(BaseModel):
+    username: str
+
+
+class ResetIn(BaseModel):
+    username: str
+    code: str
+    new_password: str
+
+
+# The installer asks for twelve, so recovery must not quietly accept less:
+# this path exists precisely for the account that owns every rupee.
+MIN_RESET_PASSWORD = 12
 
 
 def _user_payload(u: User, db: Session) -> dict:
@@ -79,6 +101,48 @@ def login(body: LoginIn, response: Response, request: Request, db: Session = Dep
     audit(db, request, u.id, "login", "user", u.id)
     db.commit()
     return {"token": token, "user": _user_payload(u, db)}
+
+
+@router.post("/forgot")
+def forgot_password(body: ForgotIn, request: Request, db: Session = Depends(get_db)):
+    """Write a reset code to the Ledger PC's data folder.
+
+    Deliberately says nothing about whether the account exists.
+    """
+    username = body.username.strip().lower()
+    path = request_reset(username)
+    audit(db, request, None, "password_reset_requested", "user", username)
+    db.commit()
+    return {
+        "ok": True,
+        "file": str(path),
+        "expires_minutes": RESET_TTL_MINUTES,
+        "attempts_allowed": MAX_RESET_ATTEMPTS,
+    }
+
+
+@router.post("/reset")
+def reset_password(body: ResetIn, request: Request, db: Session = Depends(get_db)):
+    username = body.username.strip().lower()
+    # Checked before the code is spent, so a weak password does not cost the
+    # owner a second trip to the file.
+    if len(body.new_password) < MIN_RESET_PASSWORD:
+        raise HTTPException(
+            422, f"New password must be at least {MIN_RESET_PASSWORD} characters")
+    if not verify_and_consume(username, body.code):
+        raise HTTPException(401, "That code is wrong or has expired")
+    u = db.query(User).filter_by(username=username).first()
+    if u is None or not u.is_active:
+        raise HTTPException(401, "That code is wrong or has expired")
+    u.password_hash = hash_password(body.new_password)
+    u.failed_attempts = 0
+    u.locked_until = None
+    # Whoever was signed in before may be the reason for the reset.
+    revoke_other_sessions(u, db)
+    audit(db, request, u.id, "password_reset", "user", u.id)
+    db.commit()
+    clear_reset_file()
+    return {"ok": True}
 
 
 @router.post("/logout")

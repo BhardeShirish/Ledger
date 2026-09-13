@@ -80,7 +80,7 @@ export default function DailyBrief() {
           <StatTile label="Month projection"
                     value={fc.data.projected_rupees == null
                            ? "—"
-                           : inr(Math.round(fc.data.projected_rupees * 100))}
+                           : inr(Math.round(fc.data.projected_rupees) * 100)}
                     sub={fc.data.projected_rupees == null
                          ? "no sales recorded yet this month"
                          : fc.data.confidence

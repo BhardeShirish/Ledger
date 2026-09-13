@@ -2,11 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { api } from "../api/client";
-import { Card, ErrorNote, SectionLabel } from "./ui";
+import { inr } from "../lib/format";
+import { Card, ErrorNote, SectionLabel, Spinner } from "./ui";
 import { FindingList, type Finding } from "./Findings";
-
-const money = (n: number) =>
-  "₹" + Math.round(n).toLocaleString("en-IN");
 
 function qs(start: string, end: string, outletId: number | null) {
   return `?start=${start}&end=${end}` + (outletId ? `&outlet_id=${outletId}` : "");
@@ -20,18 +18,14 @@ function Bar({ value, max, label, right }: {
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="truncate">{label}</span>
-        <span className="shrink-0 tabular-nums text-ink-soft">{right}</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="num shrink-0 text-ink-soft">{right}</span>
       </div>
       <div className="h-1.5 rounded-full bg-paper-3">
         <div className="h-1.5 rounded-full bg-accent" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
-}
-
-function Loading() {
-  return <div className="py-6 text-sm text-ink-faint">Reading the books…</div>;
 }
 
 /**
@@ -62,13 +56,14 @@ export function TradePatterns({ start, end, outletId }: {
         <SectionLabel>When you're busy</SectionLabel>
         {d && (
           <span className="text-xs text-ink-faint">
-            {d.totals.bills.toLocaleString("en-IN")} bills over{" "}
-            {d.totals.days_open} days · average {money(d.totals.avg_ticket_rupees)}
+            <span className="num">{d.totals.bills.toLocaleString("en-IN")}</span> bills over{" "}
+            <span className="num">{d.totals.days_open}</span> days · average{" "}
+            <span className="num">{inr(Math.round(d.totals.avg_ticket_rupees * 100))}</span>
           </span>
         )}
       </div>
 
-      {q.isLoading && <Loading />}
+      {q.isLoading && <Spinner label="Reading the books…" />}
       {q.isError && <ErrorNote msg="Couldn't read your bill history." />}
 
       {d && d.totals.bills === 0 ? (
@@ -87,7 +82,7 @@ export function TradePatterns({ start, end, outletId }: {
               {hours.map((h: any) => (
                 <Bar key={h.hour} value={h.rupees} max={peakHour}
                      label={`${String(h.hour).padStart(2, "0")}:00`}
-                     right={`${money(h.rupees)} · ${h.bills}`} />
+                     right={`${inr(Math.round(h.rupees * 100))} · ${h.bills}`} />
               ))}
             </div>
 
@@ -98,7 +93,7 @@ export function TradePatterns({ start, end, outletId }: {
               {weekdays.filter((w: any) => w.days_open > 0).map((w: any) => (
                 <Bar key={w.dow} value={w.rupees_per_day} max={peakDay}
                      label={w.name}
-                     right={`${money(w.rupees_per_day)} · ${w.bills_per_day} bills`} />
+                     right={`${inr(Math.round(w.rupees_per_day * 100))} · ${w.bills_per_day} bills`} />
               ))}
             </div>
           </div>
@@ -108,18 +103,20 @@ export function TradePatterns({ start, end, outletId }: {
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
                 Next seven days
               </p>
-              <span className="text-sm font-semibold">
+              <span className={d.forecast.week_rupees == null
+                ? "text-sm font-semibold"
+                : "num text-sm font-semibold"}>
                 {d.forecast.week_rupees == null
                   ? "not enough history yet"
-                  : money(d.forecast.week_rupees)}
+                  : inr(Math.round(d.forecast.week_rupees * 100))}
               </span>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
               {d.forecast.days.map((f: any) => (
                 <div key={f.date} className="flex justify-between gap-2 text-sm">
                   <span className="text-ink-soft">{f.weekday.slice(0, 3)}</span>
-                  <span className="tabular-nums">
-                    {f.rupees == null ? "—" : money(f.rupees)}
+                  <span className="num">
+                    {f.rupees == null ? "—" : inr(Math.round(f.rupees * 100))}
                   </span>
                 </div>
               ))}
@@ -139,7 +136,7 @@ export function TradePatterns({ start, end, outletId }: {
                 {d.tickets.map((t: any) => (
                   <li key={t.label} className="flex justify-between gap-2">
                     <span className="text-ink-soft">{t.label}</span>
-                    <span className="tabular-nums">
+                    <span className="num">
                       {t.bills} · {t.share_percent}%
                     </span>
                   </li>
@@ -154,8 +151,8 @@ export function TradePatterns({ start, end, outletId }: {
                 {d.order_types.map((o: any) => (
                   <li key={o.name} className="flex justify-between gap-2">
                     <span className="truncate text-ink-soft">{o.name}</span>
-                    <span className="tabular-nums">
-                      {money(o.rupees)} · {o.share_percent}%
+                    <span className="num">
+                      {inr(Math.round(o.rupees * 100))} · {o.share_percent}%
                     </span>
                   </li>
                 ))}
@@ -173,7 +170,7 @@ function Move({ pct }: { pct: number | null }) {
   const Icon = pct > 0 ? ArrowUp : pct < 0 ? ArrowDown : Minus;
   const tone = pct > 0 ? "text-bad" : pct < 0 ? "text-good" : "text-ink-faint";
   return (
-    <span className={`inline-flex items-center gap-0.5 tabular-nums ${tone}`}>
+    <span className={`num inline-flex items-center gap-0.5 ${tone}`}>
       <Icon className="h-3.5 w-3.5" />{Math.abs(pct)}%
     </span>
   );
@@ -207,13 +204,14 @@ export function PurchasePatterns({ start, end, outletId }: {
         <SectionLabel>What you buy</SectionLabel>
         {d && (
           <span className="text-xs text-ink-faint">
-            {money(d.totals.rupees)} over {d.totals.entries} purchases ·{" "}
-            {d.totals.items_price_tracked} items priced
+            <span className="num">{inr(Math.round(d.totals.rupees * 100))}</span> over{" "}
+            <span className="num">{d.totals.entries}</span> purchases ·{" "}
+            <span className="num">{d.totals.items_price_tracked}</span> items priced
           </span>
         )}
       </div>
 
-      {q.isLoading && <Loading />}
+      {q.isLoading && <Spinner label="Reading the books…" />}
       {q.isError && <ErrorNote msg="Couldn't read your purchase history." />}
 
       {d && d.totals.entries === 0 ? (
@@ -231,7 +229,7 @@ export function PurchasePatterns({ start, end, outletId }: {
               </p>
               {d.categories.slice(0, 8).map((c: any) => (
                 <Bar key={c.name} value={c.rupees} max={catMax} label={c.name}
-                     right={`${money(c.rupees)} · ${c.share_percent}%`} />
+                     right={`${inr(Math.round(c.rupees * 100))} · ${c.share_percent}%`} />
               ))}
             </div>
             <div className="space-y-2">
@@ -240,7 +238,7 @@ export function PurchasePatterns({ start, end, outletId }: {
               </p>
               {d.vendors.slice(0, 8).map((v: any) => (
                 <Bar key={v.name} value={v.rupees} max={venMax} label={v.name}
-                     right={`${money(v.rupees)} · ${v.orders} orders`} />
+                     right={`${inr(Math.round(v.rupees * 100))} · ${v.orders} orders`} />
               ))}
             </div>
           </div>
@@ -250,7 +248,10 @@ export function PurchasePatterns({ start, end, outletId }: {
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
                 Item by item
               </p>
-              <div className="mt-1 overflow-x-auto">
+              {/* Keyboard focus is required to scroll this labelled region without a pointer. */}
+              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+              <div role="region" tabIndex={0} aria-label="Item-by-item purchase pattern table"
+                   className="mt-1 overflow-x-auto rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
                 <table className="w-full min-w-[34rem] text-sm">
                   <thead className="text-xs text-ink-faint">
                     <tr className="border-b border-rule text-left">
@@ -270,21 +271,21 @@ export function PurchasePatterns({ start, end, outletId }: {
                           {i.item}
                           {i.unit && <span className="text-ink-faint"> /{i.unit}</span>}
                         </td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">
-                          {money(i.rupees)}
+                        <td className="num py-1.5 px-2 text-right">
+                          {inr(Math.round(i.rupees * 100))}
                         </td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">
+                        <td className="num py-1.5 px-2 text-right">
                           {i.times_bought}×
                         </td>
-                        <td className="py-1.5 px-2 text-right tabular-nums text-ink-soft">
+                        <td className="num py-1.5 px-2 text-right text-ink-soft">
                           {i.avg_days_between == null
                             ? "—" : `${i.avg_days_between}d`}
                         </td>
-                        <td className="py-1.5 px-2 text-right tabular-nums text-ink-soft">
-                          ₹{i.first_unit_price_rupees}
+                        <td className="num py-1.5 px-2 text-right text-ink-soft">
+                          {inr(Math.round(i.first_unit_price_rupees * 100))}
                         </td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">
-                          ₹{i.last_unit_price_rupees}
+                        <td className="num py-1.5 px-2 text-right">
+                          {inr(Math.round(i.last_unit_price_rupees * 100))}
                         </td>
                         <td className="py-1.5 pl-2 text-right">
                           <Move pct={i.change_percent} />
@@ -298,7 +299,7 @@ export function PurchasePatterns({ start, end, outletId }: {
                 <button type="button"
                         onClick={() => setShowAll((s) => !s)}
                         className="mt-2 text-sm font-medium text-accent hover:underline">
-                  {showAll ? "Show fewer" : `Show all ${items.length} items`}
+                  {showAll ? "Show fewer" : <>Show all <span className="num">{items.length}</span> items</>}
                 </button>
               )}
               <p className="mt-2 text-xs text-ink-faint">

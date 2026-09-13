@@ -62,6 +62,15 @@ DATE_FORMATS = (
     "%m/%d/%Y", "%b %d, %Y",
 )
 
+PHONEPE_COLUMNS = {
+    "date": "date",
+    "narration": "transactiondetails",
+    "ref": "utr",
+    "direction": "transactiontype",
+    "account": "creditdebitinstrument",
+    "amount": "amount",
+}
+
 
 @dataclass
 class Txn:
@@ -72,6 +81,8 @@ class Txn:
     direction: str                # "debit" or "credit"
     ref: str = ""
     row_number: int = 0
+    source: str = "bank"
+    account_ending: str = ""
 
 
 @dataclass
@@ -81,6 +92,7 @@ class Statement:
     header_row: int = 0
     skipped_rows: int = 0
     columns: dict[str, int] = field(default_factory=dict)
+    source: str = "bank"
 
 
 def _squash(value: object) -> str:
@@ -251,6 +263,17 @@ def _find_header(rows: list[list[object]]) -> tuple[int, dict[str, int]]:
     return best
 
 
+def _find_phonepe_header(rows: list[list[object]]) -> tuple[int, dict[str, int]] | None:
+    """Recognise the export PhonePe produces, before generic table parsing."""
+    required = set(PHONEPE_COLUMNS.values())
+    for index, row in enumerate(rows[:80]):
+        found = {_squash(cell): position for position, cell in enumerate(row)
+                 if _squash(cell)}
+        if required.issubset(found):
+            return index, {name: found[header] for name, header in PHONEPE_COLUMNS.items()}
+    return None
+
+
 def parse_date_cell(value: object) -> str | None:
     if value is None:
         return None
@@ -261,6 +284,7 @@ def parse_date_cell(value: object) -> str | None:
     text = str(value).strip()
     if not text:
         return None
+    text = re.sub(r"(?i)^sept(?=\s)", "Sep", text)
     text = text.split()[0] if re.match(r"^\d{1,4}[/\-.]\d{1,2}[/\-.]\d{2,4}\s", text) else text
     for fmt in DATE_FORMATS:
         try:
@@ -302,9 +326,25 @@ def _cell(row: list[object], index: int | None) -> object:
     return row[index]
 
 
-def parse(raw: bytes, filename: str = "") -> Statement:
-    """Parse a statement download into debits and credits."""
+def parse(raw: bytes, filename: str = "", statement_source: str = "auto") -> Statement:
+    """Parse a statement download using auto-detection or the selected source."""
+    if statement_source not in {"auto", "bank", "phonepe"}:
+        raise ValueError("Choose Auto-detect, Bank statement, or PhonePe export.")
     rows = read_grid(raw, filename)
+    phonepe_header = _find_phonepe_header(rows)
+    if statement_source == "phonepe":
+        if phonepe_header is None:
+            raise ValueError(
+                "This does not look like a PhonePe transaction export. "
+                "Choose Bank statement or Auto-detect."
+            )
+        return _parse_phonepe(rows, *phonepe_header)
+    if statement_source == "bank" and phonepe_header is not None:
+        raise ValueError(
+            "This is a PhonePe transaction export. Choose PhonePe export or Auto-detect."
+        )
+    if phonepe_header is not None:
+        return _parse_phonepe(rows, *phonepe_header)
     header_index, columns = _find_header(rows)
     statement = Statement(header_row=header_index + 1, columns=columns)
 
@@ -351,6 +391,41 @@ def parse(raw: bytes, filename: str = "") -> Statement:
         raise ValueError(
             "No transactions were found in this file. Please upload the "
             "account statement exactly as the bank produced it."
+        )
+    return statement
+
+
+def _parse_phonepe(rows: list[list[object]], header_index: int,
+                   columns: dict[str, int]) -> Statement:
+    """Read PhonePe's fixed transaction export while retaining its UTR."""
+    statement = Statement(header_row=header_index + 1, columns=columns,
+                          source="phonepe")
+    for offset, row in enumerate(rows[header_index + 1:], start=header_index + 2):
+        if not any(str(cell or "").strip() for cell in row):
+            continue
+        iso = parse_date_cell(_cell(row, columns["date"]))
+        amount = parse_amount_cell(_cell(row, columns["amount"]))
+        direction = str(_cell(row, columns["direction"]) or "").strip().lower()
+        if not iso or amount is None or direction not in {"debit", "credit"}:
+            statement.skipped_rows += 1
+            continue
+        account_text = str(_cell(row, columns["account"]) or "")
+        account = re.search(r"(\d{4})\s*$", account_text)
+        txn = Txn(
+            iso,
+            " ".join(str(_cell(row, columns["narration"]) or "").split()),
+            amount,
+            direction,
+            " ".join(str(_cell(row, columns["ref"]) or "").split()).removesuffix(".0"),
+            offset,
+            "phonepe",
+            account.group(1) if account else "",
+        )
+        (statement.debits if direction == "debit" else statement.credits).append(txn)
+    if not statement.debits and not statement.credits:
+        raise ValueError(
+            "No transactions were found in this PhonePe export. Download the "
+            "transaction statement directly from PhonePe and try again."
         )
     return statement
 
@@ -414,7 +489,7 @@ def counterparty(narration: str) -> tuple[str, str]:
     against, so it must stay identical for the same payee across statements -
     hence lower/upper-casing and dropping the transaction-specific digits.
     """
-    text = (narration or "").strip()
+    text = re.sub(r"(?i)^(paid to|received from)\s+", "", (narration or "").strip())
     if not text:
         return "", ""
 

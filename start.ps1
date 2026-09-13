@@ -155,6 +155,7 @@ $identity = "$env:USERDOMAIN\$env:USERNAME"
 
 $env:LEDGER_WEB_DIST = $dist
 $env:LEDGER_DATA_DIR = $dataDir
+$env:LEDGER_APPLICATION_DIR = $root
 # stable secret so sessions survive restarts
 $secretFile = Join-Path $dataDir "secret.key"
 if (Test-Path $secretFile) {

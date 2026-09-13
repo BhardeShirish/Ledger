@@ -135,7 +135,8 @@ describe("the P&L", () => {
 
   it("shows the profit and the break-even once the costs are all in", async () => {
     show(HEALTHY);
-    expect(await screen.findByText("₹84,000")).toBeInTheDocument();
+    const leftOver = (await screen.findByText("Left over")).parentElement!;
+    expect(leftOver).toHaveTextContent("₹84,000");
     expect(screen.getByText("12 bills/day")).toBeInTheDocument();
     expect(screen.getByText(/you serve 20 a day/)).toBeInTheDocument();
   });
@@ -180,7 +181,8 @@ describe("the P&L", () => {
                   contribution_rupees: null },
       breakeven: { possible: false, why: "Bill count is not available." },
     });
-    expect(await screen.findByText("₹84,000")).toBeInTheDocument();
+    const leftOver = (await screen.findByText("Left over")).parentElement!;
+    expect(leftOver).toHaveTextContent("₹84,000");
     expect(screen.getByText(/need bill-level sales details/i)).toBeInTheDocument();
     expect(screen.queryByText("Per bill")).not.toBeInTheDocument();
     expect(screen.queryByText("Break even")).not.toBeInTheDocument();
@@ -223,7 +225,8 @@ describe("the P&L", () => {
 
   it("reports food cost on a rolling window, not just the month", async () => {
     show(HEALTHY);
-    const block = (await screen.findByText(/last 28 days/)).parentElement!;
+    const block = (await screen.findByText((_, element) =>
+      element?.tagName === "P" && element.textContent === "Food cost, last 28 days")).parentElement!;
     expect(block.textContent).toContain("30%");
     expect(block.textContent).toContain("₹84,000 of ₹2,80,000");
     expect(block.textContent).toMatch(/one bulk order near a month end/);
@@ -231,8 +234,10 @@ describe("the P&L", () => {
 
   it("says where the wage bill came from", async () => {
     show(HEALTHY);
-    expect(await screen.findByText(/6 people/)).toBeInTheDocument();
-    expect(screen.getByText(/₹66,000 a month/)).toBeInTheDocument();
+    expect(await screen.findByText((_, element) =>
+      element?.tagName === "P" && Boolean(element.textContent?.includes("6 people")))).toBeInTheDocument();
+    expect(screen.getByText((_, element) =>
+      element?.tagName === "P" && Boolean(element.textContent?.includes("₹66,000 a month")))).toBeInTheDocument();
   });
 
   it("flags a part month rather than comparing it to a whole one", async () => {
@@ -241,7 +246,8 @@ describe("the P&L", () => {
       period: { ...HEALTHY.period, partial: true, days_counted: 11 },
       payroll: { ...HEALTHY.payroll, prorated: true },
     });
-    expect(await screen.findByText(/11 of 30 days/)).toBeInTheDocument();
+    expect(await screen.findByText((_, element) =>
+      element?.tagName === "SPAN" && Boolean(element.textContent?.includes("11 of 30 days")))).toBeInTheDocument();
     expect(screen.getByText(/pro rata/)).toBeInTheDocument();
   });
 

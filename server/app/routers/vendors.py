@@ -1,5 +1,6 @@
 """Vendors + khata ledger (purchase credits raise dues, payments lower them)."""
 from datetime import date
+import math
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -214,8 +215,8 @@ def add_entry(vendor_id: int, body: EntryIn, user: User = Depends(current_user),
     assert_outlet_access(db, user, body.outlet_id)
     check_edit_window(body.date, user, db)
     assert_month_open(db, body.outlet_id, body.date)
-    if body.amount_rupees <= 0:
-        raise HTTPException(422, "Amount must be positive")
+    if not math.isfinite(body.amount_rupees) or body.amount_rupees <= 0:
+        raise HTTPException(422, "Amount must be positive and finite")
     if body.type not in ("purchase_credit", "payment", "adjustment"):
         raise HTTPException(422, "Bad entry type")
     expense_id = None

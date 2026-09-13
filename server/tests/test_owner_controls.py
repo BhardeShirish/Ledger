@@ -3,6 +3,7 @@ from datetime import date
 
 from app.db import SessionLocal
 from app.models import BankCredit, Expense, ExpenseCategory, RecurringCost
+from app import backup as backup_mod
 
 
 def _policy(outlet_id):
@@ -101,3 +102,35 @@ def test_runway_withholds_unknown_balance_and_health_does_not_write(client, outl
     assert len(health.json()["restore_playbook"]) == 4
     with SessionLocal() as db:
         assert db.query(Expense).count() == before
+
+
+def test_owner_can_check_full_recovery_backup_status(client, manager):
+    status = client.get("/api/admin/backup/status")
+    assert status.status_code == 200, status.text
+    payload = status.json()
+    assert payload["directory"]
+    assert payload["retention_days"] == 30
+    assert "latest" in payload
+    assert manager.get("/api/admin/backup/status").status_code == 403
+
+
+def test_owner_can_set_a_writable_external_recovery_folder(client, tmp_path, monkeypatch):
+    target = tmp_path / "Google Drive" / "Ledger Backups"
+    monkeypatch.setattr(backup_mod, "RECOVERY_DIR", backup_mod.RECOVERY_DIR)
+    monkeypatch.setattr(backup_mod, "set_recovery_directory", lambda _: target)
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+
+    changed = client.put("/api/admin/backup/recovery-location", json={
+        "directory": str(target),
+    })
+
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["directory"] == str(target)
+    assert changed.json()["latest"]["name"].startswith("ledger-recovery-")
+
+
+def test_recovery_folder_rejects_relative_paths(client):
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    assert client.put("/api/admin/backup/recovery-location", json={
+        "directory": "not-an-absolute-path",
+    }).status_code == 422

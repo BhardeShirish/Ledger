@@ -73,11 +73,17 @@ function fallbackSummary(url: string, body: any) {
   return url.replace("/api/", "") || "Queued entry";
 }
 
+export function createWriteId(): string {
+  // Unlike randomUUID, getRandomValues also works on a phone's plain-HTTP LAN URL.
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)),
+    (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function enqueue(url: string, method: "POST" | "PUT",
-                        body: any, summary?: string) {
+                        body: any, summary?: string, id: string = createWriteId()) {
   const items = getOutbox();
   items.push({
-    id: crypto.randomUUID(), url, method, body,
+    id, url, method, body,
     summary: summary || fallbackSummary(url, body), ts: Date.now(),
     userId: currentUserId(),
     outletId: Number.isFinite(Number(body?.outlet_id))
@@ -87,6 +93,31 @@ export function enqueue(url: string, method: "POST" | "PUT",
 }
 
 let inFlight: Promise<number> | null = null;
+
+/** Only a complete endpoint acknowledgement can retire queued financial work. */
+export function isWriteAcknowledgement(url: string, data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  switch (url) {
+    case "/api/expenses":
+      return "id" in data && Number.isSafeInteger(data.id) && Number(data.id) > 0 &&
+        "outlet_id" in data && Number.isSafeInteger(data.outlet_id) &&
+        "business_date" in data && typeof data.business_date === "string" &&
+        "amount_rupees" in data && typeof data.amount_rupees === "number" && Number.isFinite(data.amount_rupees);
+    case "/api/sales/manual":
+      return "ok" in data && data.ok === true && "amount_rupees" in data &&
+        typeof data.amount_rupees === "number" && Number.isFinite(data.amount_rupees);
+    case "/api/attendance/mark":
+      return "employee_id" in data && Number.isSafeInteger(data.employee_id) &&
+        "date" in data && typeof data.date === "string" &&
+        "status" in data && typeof data.status === "string";
+    case "/api/attendance/bulk":
+      return "saved" in data && Number.isSafeInteger(data.saved) &&
+        "rows" in data && Array.isArray(data.rows) && data.rows.length === data.saved &&
+        data.rows.every((row: unknown) => isWriteAcknowledgement("/api/attendance/mark", row));
+    default:
+      return false;
+  }
+}
 
 /** Flushing twice at once sends every queued item twice and, worse, lets one
  *  flush's final save() clobber the other's. Callers all share one flush. */
@@ -119,6 +150,11 @@ async function runFlush(): Promise<number> {
         body: JSON.stringify(it.body),
       });
       if (res.ok) {
+        if (res.redirected || !res.headers.get("content-type")?.includes("json") ||
+            !isWriteAcknowledgement(it.url, await res.json())) {
+          errors.set(it.id, "Ledger did not confirm this entry. Check network sign-in before syncing; this entry is still saved on this device.");
+          break;
+        }
         flushed += 1;
         done.add(it.id);
       } else {
@@ -128,9 +164,14 @@ async function runFlush(): Promise<number> {
           message = body.detail || message;
         } catch { }
         errors.set(it.id, message);
+        if (res.status === 401) {
+          window.dispatchEvent(new Event("ledger:session-expired"));
+          break;
+        }
       }
     } catch {
-      errors.set(it.id, undefined);
+      errors.set(it.id, "Cannot reach Ledger. This entry is still saved on this device.");
+      break;
     }
   }
   // Re-read rather than saving the list we started with: anything the owner

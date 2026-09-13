@@ -62,7 +62,7 @@ def test_bulk_reconciles_bill_total_remainder(client, outlet_id):
     assert any(abs(x["amount_rupees"] - 100) < 0.01 for x in adj)
 
 
-def test_bulk_mismatch_reported_when_lines_exceed_total(client, outlet_id):
+def test_bulk_rejects_item_lines_that_exceed_entered_total(client, outlet_id):
     cats = client.get("/api/lists/categories").json()
     rc = next(c for c in cats if c["name"].lower().startswith("raw"))
     r = client.post("/api/expenses/bulk", json={
@@ -71,13 +71,8 @@ def test_bulk_mismatch_reported_when_lines_exceed_total(client, outlet_id):
         "bill_total_rupees": 100,
         "lines": [{"item_name": "Paneer", "unit": "kg",
                    "amount_rupees": 300}]})
-    assert r.status_code == 201
-    assert r.json()["mismatch_rupees"] == -200.0   # flagged, not silently dropped
-    # only the item line exists; no negative expense created
-    rows = client.get("/api/expenses", params={
-        "outlet_id": outlet_id, "start": _today(),
-        "end": _today()}).json()["rows"]
-    assert all(x["description"] != "" for x in rows)
+    assert r.status_code == 422, r.text
+    assert "cannot exceed" in r.json()["detail"]
 
 
 def test_bulk_requires_vendor_when_qty(client, outlet_id):

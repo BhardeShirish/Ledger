@@ -1,5 +1,6 @@
 """Settings + audit log + backup download."""
 import io
+import math
 import sqlite3
 import tempfile
 import zipfile
@@ -12,7 +13,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..audit import audit, get_setting_db, set_setting_db
-from ..config import DEFAULT_EDIT_CUTOFF_HOURS, UPLOAD_DIR
+from ..backup import configure_recovery_backup_directory, recovery_backup_status
+from ..config import DEFAULT_EDIT_CUTOFF_HOURS, SECRET_KEY_FILE, UPLOAD_DIR
 from ..db import get_db
 from ..models import AuditLog, User
 from ..security import require_owner, require_stepup
@@ -27,6 +29,10 @@ class SettingIn(BaseModel):
 
 class SettingsBulkIn(BaseModel):
     values: dict[str, object]
+
+
+class RecoveryLocationIn(BaseModel):
+    directory: str | None = None
 
 
 ALLOWED_KEYS = {
@@ -50,6 +56,12 @@ DEFAULTS = {
     "timezone_name": "Asia/Kolkata",
     "restaurant_name": "My restaurant",
 }
+
+MAX_EDIT_CUTOFF_HOURS = 8_760
+MAX_VARIANCE_ALERT_PAISE = 1_000_000_000
+MAX_DENOMINATION = 1_000_000
+VALID_TIP_POLICIES = {"record-only"}
+VALID_OCR_PROVIDERS = {"openai_compat", "tesseract"}
 
 
 @router.get("/settings")
@@ -86,35 +98,78 @@ def write_settings_bulk(body: SettingsBulkIn,
     return {"ok": True}
 
 
+def _whole_number(value: object, label: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HTTPException(422, f"{label} must be a whole number")
+    try:
+        number = float(value)
+    except OverflowError:
+        raise HTTPException(422, f"{label} must be a finite number") from None
+    if not math.isfinite(number):
+        raise HTTPException(422, f"{label} must be a finite number")
+    if not number.is_integer() or not minimum <= number <= maximum:
+        raise HTTPException(422, f"{label} must be a whole number from {minimum} to {maximum}")
+    return int(number)
+
+
+def _text(value: object, label: str, *, allow_blank: bool = False) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(422, f"{label} must be text")
+    text = value.strip()
+    if not text and not allow_blank:
+        raise HTTPException(422, f"{label} cannot be blank")
+    return text
+
+
 def _validate_setting(key: str, value: object):
     if key not in ALLOWED_KEYS:
         raise HTTPException(422, f"Unknown setting {key}")
+    if key == "edit_cutoff_hours":
+        return _whole_number(value, "Edit window", 0, MAX_EDIT_CUTOFF_HOURS)
+    if key == "variance_alert_paise":
+        return _whole_number(value, "Variance alert", 0, MAX_VARIANCE_ALERT_PAISE)
+    if key == "salary_divisor_default":
+        return _whole_number(value, "Salary divisor", 1, 60)
     if key == "denominations":
-        vals = sorted({int(v) for v in value}, reverse=True) \
-            if isinstance(value, list) else None
-        if not vals or any(v < 1 for v in vals):
+        if not isinstance(value, list):
+            raise HTTPException(422, "Denominations must be positive numbers")
+        vals = sorted({
+            _whole_number(item, "Denominations", 1, MAX_DENOMINATION)
+            for item in value
+        }, reverse=True)
+        if not vals:
             raise HTTPException(422, "Denominations must be positive numbers")
         return vals
     if key in {"currency_code", "currency_symbol", "currency_locale"}:
-        text = str(value).strip()
-        if not text:
-            raise HTTPException(422, f"{key} cannot be blank")
-        return text
+        return _text(value, key)
     if key == "restaurant_name":
-        text = str(value).strip()
-        if not text:
-            raise HTTPException(422, "Business name cannot be blank")
+        text = _text(value, "Business name")
         if len(text) > 80:
             raise HTTPException(422, "Business name must be 80 characters or fewer")
         return text
     if key == "timezone_name":
-        text = str(value).strip()
+        text = _text(value, "Timezone")
         try:
             ZoneInfo(text)
         except (ZoneInfoNotFoundError, ValueError):
             raise HTTPException(422, "Unknown timezone")
         return text
-    return value
+    if key == "tip_policy":
+        if value not in VALID_TIP_POLICIES:
+            raise HTTPException(422, "Unknown tip policy")
+        return value
+    if key == "ocr_enabled":
+        if not isinstance(value, bool):
+            raise HTTPException(422, "OCR enabled must be true or false")
+        return value
+    if key == "ocr_provider":
+        provider = _text(value, "OCR provider")
+        if provider not in VALID_OCR_PROVIDERS:
+            raise HTTPException(422, "Unknown OCR provider")
+        return provider
+    if key in {"ocr_base_url", "ocr_model", "ocr_api_key"}:
+        return _text(value, key, allow_blank=True)
+    raise HTTPException(422, f"Unknown setting {key}")
 
 
 @router.get("/audit")
@@ -161,6 +216,8 @@ def backup(user: User = Depends(require_stepup), db: Session = Depends(get_db)):
             for p in UPLOAD_DIR.rglob("*"):
                 if p.is_file():
                     z.write(p, arcname=f"uploads/{p.relative_to(UPLOAD_DIR)}")
+            if SECRET_KEY_FILE.exists():
+                z.write(SECRET_KEY_FILE, arcname="secret.key")
     data = buf.getvalue()
     audit(db, None, user.id, "backup-download", "backup", stamp)
     db.commit()
@@ -169,3 +226,26 @@ def backup(user: User = Depends(require_stepup), db: Session = Depends(get_db)):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="ledger-backup-{stamp}.zip"'},
     )
+
+
+@router.get("/backup/status")
+def backup_status(user: User = Depends(require_owner)):
+    return recovery_backup_status()
+
+
+@router.put("/backup/recovery-location")
+def set_backup_recovery_location(body: RecoveryLocationIn,
+                                 user: User = Depends(require_stepup),
+                                 db: Session = Depends(get_db)):
+    try:
+        status = configure_recovery_backup_directory(body.directory)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            422, "Ledger cannot write to that recovery folder. Check the path and Drive sync."
+        ) from exc
+    audit(db, None, user.id, "backup-location", "backup",
+          "default" if body.directory is None else "owner-selected")
+    db.commit()
+    return status

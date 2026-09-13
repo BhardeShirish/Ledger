@@ -259,6 +259,43 @@ def test_analytics_keeps_manual_sales_from_another_outlet(client, outlet_id):
     assert data["totals"]["sales_net"] == 140.0
 
 
+def test_analytics_exposes_food_cost_water_and_bank_settlement_sales(client, outlet_id):
+    """Bank-derived revenue is sales, but has no invented bill count."""
+    from app.db import SessionLocal
+    from app.models import Expense, ExpenseCategory, SalesDaily
+
+    business_date = _old(5)
+    with SessionLocal() as db:
+        food = db.query(ExpenseCategory).filter_by(name="Groceries").one()
+        water = db.query(ExpenseCategory).filter_by(name="Water").one()
+        db.add_all([
+            SalesDaily(
+                outlet_id=outlet_id, business_date=business_date,
+                channel_kind="aggregator", source="bank", amount_paise=100_000,
+            ),
+            Expense(
+                outlet_id=outlet_id, business_date=business_date,
+                category_id=food.id, amount_paise=30_000, item_name="", unit="",
+            ),
+            Expense(
+                outlet_id=outlet_id, business_date=business_date,
+                category_id=water.id, amount_paise=6_000, item_name="", unit="",
+            ),
+        ])
+        db.commit()
+
+    data = client.get("/api/stats/analytics", params={
+        "start": business_date, "end": business_date, "outlet_id": outlet_id,
+    }).json()
+    water_key = f"expense_category_{water.id}"
+    assert data["series"]["sales_aggregator"] == [1000.0]
+    assert data["series"]["food_cost"] == [300.0]
+    assert data["series"][water_key] == [60.0]
+    assert data["series"]["bills"] == [0]
+    assert data["series"]["avg_ticket"] == [0.0]
+    assert {"food_cost", water_key} <= {x["key"] for x in data["cost_metrics"] + data["expense_metrics"]}
+
+
 def test_budgets_flow(client):
     cats = client.get("/api/lists/categories").json()
     gas = next(c for c in cats if c["name"] == "Gas Cylinder")

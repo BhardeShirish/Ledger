@@ -102,6 +102,18 @@ def test_closing_the_day_still_records_the_variance_honestly(client, outlet_id):
     assert r.json()["variance_paise"] == 30_000
 
 
+def test_closing_with_a_variance_requires_a_nonblank_reason(client, outlet_id):
+    d = today_iso()
+    _cash(client, outlet_id, d, 100)
+    expected = _day(client, outlet_id, d)["expected_paise"]
+    r = client.post("/api/cash/close", json={
+        "outlet_id": outlet_id, "date": d,
+        "counted_rupees": (expected + 100) / 100,
+        "taken_home_rupees": 0, "note": "   "})
+    assert r.status_code == 422, r.text
+    assert "reason" in r.json()["detail"].lower()
+
+
 def test_cash_close_rejects_malformed_and_future_dates(client, outlet_id):
     for close_date in ("not-a-date", (date.today() + timedelta(days=1)).isoformat()):
         r = client.post("/api/cash/close", json={

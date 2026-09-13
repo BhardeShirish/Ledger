@@ -3,24 +3,31 @@ import { useOutletContext } from "react-router-dom";
 import { useState } from "react";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
-import { fmtDateShort, inr } from "../lib/format";
-import { Badge, Button, Card, SectionLabel, Spinner } from "../components/ui";
+import { fmtDateShort, inr, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
+import { Badge, Button, Card, ErrorNote, Field, Input, SectionLabel, Spinner } from "../components/ui";
+
+const NO_COUNTS: Record<number, string> = {};
 
 export default function InventoryCounts() {
   const { outletId } = useOutletContext<{ outletId: number }>();
   const guarded = useGuarded();
   const qc = useQueryClient();
   const [countId, setCountId] = useState<number | null>(null);
+  const [businessDate, setBusinessDate] = useState(todayISO());
+  const [startError, setStartError] = useState("");
   const [values, setValues] = useState<Record<number, string>>({});
   const [result, setResult] = useState<any>(null);
   const history = useQuery({
     queryKey: ["inv-count-history", outletId],
-    queryFn: () => api.get(`/inventory/counts?outlet_id=${outletId}&start=2020-01-01&end=${new Date().toISOString().slice(0, 10)}`),
+    queryFn: () => api.get(`/inventory/counts?outlet_id=${outletId}&start=2020-01-01&end=${todayISO()}`),
   });
 
   const start = useMutation({
-    mutationFn: () => guarded(() => api.post(`/inventory/count/start?outlet_id=${outletId}`)),
-    onSuccess: (r) => setCountId(r.count_id),
+    mutationFn: () => guarded(() => api.post(
+      `/inventory/count/start?outlet_id=${outletId}&business_date=${encodeURIComponent(businessDate)}`)),
+    onSuccess: (r) => { setStartError(""); setCountId(r.count_id); },
+    onError: (e: any) => setStartError(e.message),
   });
   const count = useQuery({
     queryKey: ["inv-count", countId],
@@ -42,6 +49,13 @@ export default function InventoryCounts() {
     const value = values[line.stock_item_id];
     return value !== undefined && value !== "" &&
       Number.isFinite(Number(value)) && Number(value) >= 0;
+  });
+  // A half-finished shelf count is the most expensive draft on this page:
+  // the shelf has already been walked.
+  useDirtyDraft({
+    open: countId != null, label: "stock count",
+    values, pristine: NO_COUNTS,
+    discard: () => setValues(NO_COUNTS),
   });
 
   if (result) {
@@ -66,6 +80,11 @@ export default function InventoryCounts() {
             Count what's physically on the shelf. The difference vs system
             becomes your real shrinkage number.
           </p>
+          <Field label="Count date" className="w-full max-w-sm text-left">
+            <Input type="date" value={businessDate} max={todayISO()}
+                   onChange={(e) => setBusinessDate(e.target.value)} />
+          </Field>
+          <ErrorNote msg={startError} />
           <Button className="mt-2" onClick={() => start.mutate()}
                   disabled={start.isPending}>
             {start.isPending ? "Preparing…" : "Start a count"}
@@ -85,9 +104,10 @@ export default function InventoryCounts() {
               <span className="min-w-0 flex-1 truncate">{l.name}
                 <span className="ml-1 text-xs text-ink-faint">{l.base_unit}</span></span>
               <span className="num w-20 text-right text-ink-faint">sys {l.system_qty}</span>
-              <input inputMode="decimal" placeholder="counted" value={values[l.stock_item_id] ?? ""}
+              <Input size="compact" inputMode="decimal" placeholder="counted" value={values[l.stock_item_id] ?? ""}
+                     aria-label={`Counted ${l.base_unit} for ${l.name}`}
                      onChange={(e) => setValues((x) => ({ ...x, [l.stock_item_id]: e.target.value }))}
-                     className="w-24 rounded-md border border-rule-strong bg-paper px-2 py-1.5 text-right num" />
+                     className="!w-24 text-right" />
               {values[l.stock_item_id] !== undefined && values[l.stock_item_id] !== "" && (
                 <span className={`num w-16 text-right text-xs ${
                   Number(values[l.stock_item_id]) - l.system_qty < 0 ? "text-bad" : "text-good"}`}>
@@ -96,38 +116,6 @@ export default function InventoryCounts() {
                 </span>
               )}
 
-              {!countId && !result && (history.data?.counts ?? []).length > 0 && (
-                <Card className="overflow-hidden">
-                  <div className="border-b border-rule px-4 py-3">
-                    <h2 className="font-semibold">Count variance history</h2>
-                    <p className="mt-0.5 text-sm text-ink-faint">Frozen shelf counts compared with the system quantity at that time.</p>
-                  </div>
-                  <div className="divide-y divide-rule">
-                    {history.data.counts.slice(0, 6).map((count: any) => (
-                      <details key={count.id} className="group">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-paper-3/50">
-                          <span className="font-medium">{fmtDateShort(count.date)}</span>
-                          <span className={`num ${count.variance_value_paise < 0 ? "text-bad" : "text-good"}`}>
-                            {inr(count.variance_value_paise, { sign: true })}
-                          </span>
-                        </summary>
-                        <div className="border-t border-rule bg-paper-2 px-4 py-2">
-                          {count.lines.map((line: any) => (
-                            <div key={line.stock_item_id} className="flex items-baseline gap-3 py-1 text-sm">
-                              <span className="min-w-0 flex-1 truncate">{line.name}</span>
-                              <span className="num text-ink-faint">sys {line.theoretical_qty}</span>
-                              <span className="num">physical {line.physical_qty}</span>
-                              <span className={`num w-16 text-right ${line.variance_qty < 0 ? "text-bad" : "text-good"}`}>
-                                {line.variance_qty >= 0 ? "+" : ""}{line.variance_qty}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                </Card>
-              )}
             </div>
           ))}
           <div className="px-4 py-3">
@@ -140,6 +128,38 @@ export default function InventoryCounts() {
                 Enter a non-negative count for every item before finishing.
               </p>
             )}
+          </div>
+        </Card>
+      )}
+      {!countId && (history.data?.counts ?? []).length > 0 && (
+        <Card className="overflow-hidden">
+          <div className="border-b border-rule px-4 py-3">
+            <h2 className="font-semibold">Count variance history</h2>
+            <p className="mt-0.5 text-sm text-ink-faint">Frozen shelf counts compared with the system quantity at that time.</p>
+          </div>
+          <div className="divide-y divide-rule">
+            {history.data.counts.slice(0, 6).map((count: any) => (
+              <details key={count.id} className="group">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-paper-3/50">
+                  <span className="font-medium">{fmtDateShort(count.date)}</span>
+                  <span className={`num ${count.variance_value_paise < 0 ? "text-bad" : "text-good"}`}>
+                    {inr(count.variance_value_paise, { sign: true })}
+                  </span>
+                </summary>
+                <div className="border-t border-rule bg-paper-2 px-4 py-2">
+                  {count.lines.map((line: any) => (
+                    <div key={line.stock_item_id} className="flex items-baseline gap-3 py-1 text-sm">
+                      <span className="min-w-0 flex-1 truncate">{line.name}</span>
+                      <span className="num text-ink-faint">sys {line.theoretical_qty}</span>
+                      <span className="num">physical {line.physical_qty}</span>
+                      <span className={`num w-16 text-right ${line.variance_qty < 0 ? "text-bad" : "text-good"}`}>
+                        {line.variance_qty >= 0 ? "+" : ""}{line.variance_qty}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
           </div>
         </Card>
       )}

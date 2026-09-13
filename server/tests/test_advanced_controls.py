@@ -92,3 +92,18 @@ def test_cash_reconciliation_and_vendor_aging(client, outlet_id):
     aging = client.get("/api/vendors/aging", params={"outlet_id": outlet_id, "as_of": today}).json()
     row = next(row for row in aging if row["vendor_id"] == vendor["id"])
     assert row["buckets"]["31_60"] == 10000
+
+
+def test_vendor_entries_reject_non_finite_amounts(client, outlet_id):
+    vendor = client.post("/api/vendors", json={"name": "Finite amount vendor"}).json()
+    today = date.today().isoformat()
+    for amount in ("-1", "NaN", "Infinity"):
+        r = client.post(
+            f"/api/vendors/{vendor['id']}/entries",
+            content=(
+                f'{{"outlet_id":{outlet_id},"date":"{today}",'
+                f'"type":"payment","amount_rupees":{amount}}}'
+            ),
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 422, r.text

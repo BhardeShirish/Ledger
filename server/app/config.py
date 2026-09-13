@@ -4,6 +4,69 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("LEDGER_DATA_DIR", "./data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 BACKUP_DIR = DATA_DIR / "backups"
+# Windows launches keep this outside the application directory even when the
+# server is started directly. Containers may set LEDGER_RECOVERY_DIR to a
+# separately mounted volume; their default remains inside the data volume.
+_recovery_default = (
+    Path.home() / "Documents" / "Ledger Backups"
+    if os.name == "nt" else DATA_DIR / "recovery"
+)
+_config_default = Path(os.environ.get(
+    "APPDATA", str(Path.home() / ".config")
+)) / "Ledger"
+RECOVERY_LOCATION_FILE = Path(os.environ.get(
+    "LEDGER_CONFIG_DIR", str(_config_default)
+)) / "recovery-location.txt"
+
+
+def _is_safe_recovery_directory(directory: Path) -> bool:
+    try:
+        if not directory.is_absolute():
+            return False
+        resolved = directory.resolve()
+        if resolved.is_relative_to(DATA_DIR.resolve()):
+            return False
+        app_root = os.environ.get("LEDGER_APPLICATION_DIR", "").strip()
+        return not app_root or not resolved.is_relative_to(Path(app_root).resolve())
+    except OSError:
+        return False
+
+
+def _read_recovery_directory() -> Path:
+    explicit = os.environ.get("LEDGER_RECOVERY_DIR", "").strip()
+    if explicit:
+        return Path(explicit)
+    try:
+        saved = Path(RECOVERY_LOCATION_FILE.read_text(encoding="utf-8").strip())
+        if _is_safe_recovery_directory(saved):
+            return saved
+    except OSError:
+        pass
+    return _recovery_default
+
+
+def set_recovery_directory(directory: str | None) -> Path:
+    """Persist an owner-selected destination outside Ledger's data directory."""
+    if directory is None:
+        RECOVERY_LOCATION_FILE.unlink(missing_ok=True)
+        return _recovery_default
+    selected = Path(directory).expanduser()
+    if not _is_safe_recovery_directory(selected):
+        raise ValueError("Choose an absolute folder outside Ledger's data directory.")
+    selected.mkdir(parents=True, exist_ok=True)
+    probe = selected / ".ledger-backup-write-test"
+    try:
+        probe.write_text("ok", encoding="ascii")
+    finally:
+        probe.unlink(missing_ok=True)
+    RECOVERY_LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    partial = RECOVERY_LOCATION_FILE.with_suffix(".tmp")
+    partial.write_text(str(selected), encoding="utf-8")
+    partial.replace(RECOVERY_LOCATION_FILE)
+    return selected
+
+
+RECOVERY_DIR = _read_recovery_directory()
 DB_PATH = DATA_DIR / "ledger.db"
 
 SECRET_KEY_FILE = DATA_DIR / "secret.key"

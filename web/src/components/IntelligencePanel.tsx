@@ -3,7 +3,8 @@ import { ArrowRight, Database, Eye, Sparkles, TriangleAlert } from "lucide-react
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { api } from "../api/client";
-import { Button, Card, ErrorNote, SectionLabel } from "./ui";
+import { inr } from "../lib/format";
+import { Button, Card, ErrorNote, Input, SectionLabel, Select, Spinner } from "./ui";
 
 type Bucket = "act_today" | "watch_this_week" | "improve_data";
 
@@ -16,6 +17,7 @@ type Finding = {
   detail: string;
   action: { label: string; href: string };
   confidence: { level: "high" | "medium" | "low"; reason: string };
+  metric?: { value_paise?: number | null; observations?: number | null } | null;
   coverage?: { observed: number; expected: number; ratio: number; status: string };
   resolution?: { status: string; note: string; updated_at: string | null };
 };
@@ -45,6 +47,36 @@ function labelForStatus(status: string) {
   if (status === "ready") return "A broad operating picture is available.";
   if (status === "provisional") return "Use the signals, but fill the gaps before making bigger calls.";
   return "Record a little more before relying on an overall health score.";
+}
+
+/**
+ * The control inbox raises one finding per unreconciled cash close, so a month
+ * of undeposited drawers arrives as the same sentence repeated down the queue
+ * and the panel stops reading as a list of decisions. Findings that share a
+ * title and a destination are one piece of work seen many times: state it
+ * once with the count and the money, and keep every occurrence reviewable
+ * underneath. A materially different title is a different problem and is left
+ * alone.
+ */
+function groupFindings(findings: Finding[]): Finding[][] {
+  const groups = new Map<string, Finding[]>();
+  for (const finding of findings) {
+    const key = `${finding.title}\u0000${finding.action.href}`;
+    const existing = groups.get(key);
+    if (existing) existing.push(finding);
+    else groups.set(key, [finding]);
+  }
+  return [...groups.values()];
+}
+
+function groupTotalPaise(group: Finding[]): number | null {
+  let total = 0;
+  for (const finding of group) {
+    const value = finding.metric?.value_paise;
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    total += value;
+  }
+  return total;
 }
 
 export default function IntelligencePanel({ outletId, asOf }: {
@@ -90,7 +122,7 @@ export default function IntelligencePanel({ outletId, asOf }: {
         )}
       </div>
 
-      {q.isLoading && <p className="border-t border-rule px-4 py-5 text-sm text-ink-faint">Reading recorded evidence…</p>}
+      {q.isLoading && <div className="border-t border-rule px-4"><Spinner label="Reading recorded evidence…" /></div>}
       {q.isError && <div className="border-t border-rule px-4 py-4"><ErrorNote msg="Couldn't prepare the owner intelligence brief." /></div>}
 
       {brief && GROUPS.map(({ bucket, title, icon: Icon }) => {
@@ -103,27 +135,68 @@ export default function IntelligencePanel({ outletId, asOf }: {
               <h3>{title}</h3>
             </div>
             <ul className="mt-1 divide-y divide-rule">
-              {findings.map((finding) => (
-                <li key={finding.id} className="px-4 py-3">
-                  <Link to={finding.action.href} className="group block hover:bg-paper-3/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium">{finding.title}</p>
-                        <p className="mt-0.5 text-sm text-ink-soft">{finding.detail}</p>
+              {groupFindings(findings).map((group) => {
+                const [head] = group;
+                const repeated = group.length > 1;
+                const total = repeated ? groupTotalPaise(group) : null;
+                const period = brief.scope?.month ?? asOf.slice(0, 7);
+                return (
+                  <li key={head.id} className="px-4 py-3">
+                    <Link to={head.action.href} className="group block hover:bg-paper-3/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-medium">
+                            {head.title}
+                            {repeated && <span className="num text-ink-soft"> · {group.length} times</span>}
+                          </p>
+                          <p className="mt-0.5 text-sm text-ink-soft">
+                            {repeated && (total != null && total > 0
+                              ? `${inr(total)} across ${group.length} records is still open. `
+                              : `The same finding stands on ${group.length} records. `)}
+                            {head.detail}
+                          </p>
+                          {repeated && (
+                            <span className="mt-1 inline-block text-sm font-semibold text-accent">
+                              {head.action.label}
+                            </span>
+                          )}
+                        </div>
+                        <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
                       </div>
-                      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-                    </div>
-                    <p className="mt-1.5 text-xs text-ink-faint">
-                      {finding.confidence.level} confidence · {finding.confidence.reason}
-                      {finding.coverage?.expected
-                        ? ` · ${finding.coverage.observed}/${finding.coverage.expected} days covered`
-                        : ""}
-                    </p>
-                  </Link>
-                  <ResolutionControl finding={finding} outletId={outletId}
-                                     coveredPeriod={brief.scope?.month ?? asOf.slice(0, 7)} />
-                </li>
-              ))}
+                      <p className="mt-1.5 text-xs text-ink-faint">
+                        {head.confidence.level} confidence · {head.confidence.reason}
+                        {head.coverage?.expected
+                          ? ` · ${head.coverage.observed}/${head.coverage.expected} days covered`
+                          : ""}
+                      </p>
+                    </Link>
+                    {repeated ? (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs font-medium text-ink-soft hover:text-ink">
+                          Review each of the {group.length} separately
+                        </summary>
+                        <ul className="mt-2 space-y-2 border-l border-rule pl-3">
+                          {group.map((finding) => (
+                            <li key={finding.id}>
+                              <p className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                                {finding.metric?.value_paise != null && (
+                                  <span className="num font-medium">{inr(finding.metric.value_paise)}</span>
+                                )}
+                                <span className="text-ink-faint">{finding.id}</span>
+                              </p>
+                              <ResolutionControl finding={finding} outletId={outletId}
+                                                 coveredPeriod={period}
+                                                 nameSuffix={finding.id} />
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : (
+                      <ResolutionControl finding={head} outletId={outletId} coveredPeriod={period} />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         );
@@ -137,7 +210,7 @@ export default function IntelligencePanel({ outletId, asOf }: {
       {brief && (
         <section className="border-t border-rule px-4 py-3">
           <h3 className="text-sm font-semibold">Resolution history</h3>
-          {history.isLoading && <p className="mt-1 text-xs text-ink-faint">Loading decisions…</p>}
+          {history.isLoading && <Spinner label="Loading decisions…" />}
           {history.isError && <p className="mt-1 text-xs text-bad">Resolution history is unavailable.</p>}
           {!history.isLoading && !history.isError && (history.data?.items ?? []).length === 0 && (
             <p className="mt-1 text-xs text-ink-faint">No owner decisions recorded yet.</p>
@@ -197,12 +270,16 @@ export default function IntelligencePanel({ outletId, asOf }: {
   );
 }
 
-function ResolutionControl({ finding, outletId, coveredPeriod, reopenOnly = false }: {
+function ResolutionControl({ finding, outletId, coveredPeriod, reopenOnly = false, nameSuffix }: {
   finding: Finding; outletId: number; coveredPeriod: string; reopenOnly?: boolean;
+  nameSuffix?: string;
 }) {
   const qc = useQueryClient();
   const [state, setState] = useState("resolved");
   const [note, setNote] = useState("");
+  // Consolidated findings repeat one title, so the occurrence's own id is what
+  // tells two otherwise identical controls apart for a screen reader.
+  const name = nameSuffix ? `${finding.title} (${nameSuffix})` : finding.title;
   const save = useMutation({
     mutationFn: () => api.post(reopenOnly ? "/owner/resolutions/reopen" : "/owner/resolutions", {
       outlet_id: outletId, finding_id: finding.id, covered_period: coveredPeriod,
@@ -216,24 +293,26 @@ function ResolutionControl({ finding, outletId, coveredPeriod, reopenOnly = fals
   });
   if (reopenOnly) return (
     <Button size="sm" variant="ghost" className="ml-1" disabled={save.isPending}
+            aria-label={`Reopen ${name}`}
             onClick={() => save.mutate()}>{save.isPending ? "Reopening…" : "Reopen"}</Button>
   );
   const needsNote = state !== "resolved";
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-      <select aria-label={`Resolution for ${finding.title}`} value={state}
+      <Select size="compact" aria-label={`Resolution for ${name}`} value={state}
               onChange={(e) => setState(e.target.value)}
-              className="rounded border border-rule-strong bg-paper px-1.5 py-1 text-xs">
+              className="!w-auto">
         <option value="resolved">Resolved</option>
         <option value="deferred">Deferred</option>
         <option value="accepted_not_applicable">Not applicable</option>
-      </select>
-      {needsNote && <input aria-label={`Note for ${finding.title}`} value={note}
+      </Select>
+      {needsNote && <Input size="compact" aria-label={`Note for ${name}`} value={note}
         onChange={(e) => setNote(e.target.value)} placeholder="Required note"
-        className="min-w-0 flex-1 rounded border border-rule-strong bg-paper px-2 py-1 text-xs" />}
+        className="min-w-0 flex-1" />}
       <Button size="sm" variant="ghost" disabled={save.isPending || (needsNote && !note.trim())}
+              aria-label={`Save decision for ${name}`}
               onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save decision"}</Button>
-      {save.isError && <span className="basis-full text-xs text-bad">{(save.error as any)?.message ?? "Couldn't save decision."}</span>}
+      {save.isError && <div className="basis-full"><ErrorNote msg={(save.error as any)?.message ?? "Couldn't save decision."} /></div>}
     </div>
   );
 }

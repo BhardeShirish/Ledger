@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api/client";
 import { inr, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import { ExportButton } from "../components/DataButtons";
 import {
   Badge, Button, Card, EmptyState, Field, Input, SectionLabel, Sheet, Spinner,
@@ -29,6 +31,11 @@ export default function VendorsList() {
   const create = useMutation({
     mutationFn: () => api.post("/vendors", { name, phone }),
     onSuccess: () => { setOpen(false); setName(""); setPhone(""); qc.invalidateQueries({ queryKey: ["vendors"] }); },
+  });
+  const draft = useDirtyDraft({
+    open, label: "new vendor",
+    values: { name, phone }, pristine: { name: "", phone: "" },
+    discard: () => { setName(""); setPhone(""); setOpen(false); },
   });
 
   if (q.isLoading) return <Spinner />;
@@ -77,8 +84,9 @@ export default function VendorsList() {
           <EmptyState title="No vendors yet" hint="Add your vegetable mart, dairy, gas agency — then log purchases on credit against them." />
         )}
         {rows.map((v) => (
-          <a key={v.id} href={`/money/vendors/${v.id}`}
-             className="flex items-center gap-3 px-4 py-3 hover:bg-paper-3/50">
+          <Link key={v.id} to={`/money/vendors/${v.id}`}
+                aria-label={`Open ${v.name} — ${inr(v.balance_paise)} due`}
+                className="flex min-h-11 items-center gap-3 px-4 py-3 hover:bg-paper-3/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
             <div className="min-w-0 flex-1">
               <div className="font-medium">{v.name}</div>
               <div className="text-xs text-ink-faint">{v.phone || "—"}</div>
@@ -86,13 +94,14 @@ export default function VendorsList() {
             {!v.is_active && <Badge>inactive</Badge>}
             <div className={`num text-right font-medium ${v.balance_paise > 0 ? "text-bad" : ""}`}>
               {inr(v.balance_paise)}
-              <div className="text-[10px] uppercase tracking-wide text-ink-faint">due</div>
+              <div className="text-xs uppercase tracking-wide text-ink-faint">due</div>
             </div>
-          </a>
+            <ChevronRight size={16} aria-hidden="true" className="shrink-0 text-ink-faint" />
+          </Link>
         ))}
       </Card>
 
-      <Sheet open={open} onClose={() => setOpen(false)} title="New vendor">
+      <Sheet open={open} onClose={draft.close} title="New vendor">
         <div className="space-y-3">
           <Field label="Name"><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Phone (optional)"><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>

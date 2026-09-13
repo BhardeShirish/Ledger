@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useOutletContext } from "react-router-dom";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { FileSpreadsheet } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { ExportButton } from "../components/DataButtons";
 import { DOW_LABELS, inr, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import {
   Badge, Button, Card, ErrorNote, Field, Input, SectionLabel, Select,
   Sheet, Spinner,
@@ -46,7 +47,7 @@ export default function PeopleList() {
           {e.monthly_salary_rupees > 0 ? (
             <>
               {inr(Math.round(e.monthly_salary_rupees * 100))}
-              <span className="text-[10px] uppercase tracking-wide text-ink-faint"> /mo</span>
+              <span className="text-xs uppercase tracking-wide text-ink-faint"> /mo</span>
             </>
           ) : (
             // ₹0 a month is almost always a blank that was never filled in,
@@ -190,11 +191,12 @@ function ImportSheetButton({ outletId }: { outletId: number }) {
 
 function AddPerson({ open, onClose, outletId, shifts, people }: any) {
   const qc = useQueryClient();
-  const [f, setF] = useState<any>({
+  const blank = useMemo(() => ({
     name: "", phone: "", designation: "", monthly_salary_rupees: "",
     join_date: todayISO(), off_dow: "", pref_off_dow: "", default_shift_id: "",
     divisor: 26,
-  });
+  }), []);
+  const [f, setF] = useState<any>(blank);
   const [err, setErr] = useState("");
   const set = (k: string) => (e: any) => setF((x: any) => ({ ...x, [k]: e.target.value }));
 
@@ -211,13 +213,19 @@ function AddPerson({ open, onClose, outletId, shifts, people }: any) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["people"] });
       onClose();
-      setF((x: any) => ({ ...x, name: "", phone: "", monthly_salary_rupees: "" }));
+      setF(blank);
+      setErr("");
     },
     onError: (e: any) => setErr(e.message),
   });
+  const draft = useDirtyDraft({
+    open, label: "new staff member",
+    values: f, pristine: blank,
+    discard: () => { setF(blank); setErr(""); onClose(); },
+  });
 
   return (
-    <Sheet open={open} onClose={onClose} title="Add staff member">
+    <Sheet open={open} onClose={draft.close} title="Add staff member">
       <div className="space-y-3.5">
         <Field label="Full name"><Input autoFocus value={f.name} onChange={set("name")} /></Field>
         <div className="grid grid-cols-2 gap-3">

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 from datetime import date
 
@@ -24,10 +25,13 @@ from .. import bankstmt
 from ..audit import audit, check_edit_window
 from ..config import DATA_DIR
 from ..db import get_db
+from ..expense_duplicates import candidate_map
 from ..models import (BankCredit, BankRule, CashBankMatch, DayClosure, Expense,
-                      ExpenseCategory, ImportBatch, User, Vendor)
+                      ExpenseCategory, ImportBatch, MonthLock, PurchaseReceipt,
+                      PurchaseReceiptLine, User, Vendor, utcnow)
 from ..periods import assert_dates_open
 from ..security import current_user, require_owner, require_stepup
+from ..vendor_ledger import sync_credit_entry_for_expense
 from .helpers import assert_outlet_access
 
 router = APIRouter(prefix="/bank", tags=["bank"])
@@ -44,6 +48,14 @@ def _stash_path(batch_id: int):
     return DATA_DIR / "imports" / f"batch_{batch_id}.json"
 
 
+def _statement_reference(ref: str) -> str:
+    """Return a trustworthy UTR/reference shared by bank and PhonePe exports."""
+    value = re.sub(r"\s+", "", (ref or "").upper()).removesuffix(".0").lstrip("0")
+    if len(value) < 8 or not re.fullmatch(r"[A-Z0-9]+", value):
+        return ""
+    return value
+
+
 def _line_hash(outlet_id: int, txn: dict, occurrence: int = 1) -> str:
     """Identify one statement line, stably, across re-downloads.
 
@@ -56,6 +68,20 @@ def _line_hash(outlet_id: int, txn: dict, occurrence: int = 1) -> str:
     silently swallowing it as a duplicate, while still matching itself on a
     re-download - the same file always yields the same numbering.
     """
+    reference = _statement_reference(txn.get("ref") or "")
+    raw = (f"statement-reference|{outlet_id}|{reference}" if reference else "|".join([
+        "bank", str(outlet_id), txn["date"], str(txn["amount_paise"]),
+        (txn.get("ref") or "").strip().upper(),
+        " ".join((txn.get("narration") or "").split()).upper(),
+        txn.get("direction") or "",
+    ]))
+    if occurrence > 1:
+        raw = f"{raw}|#{occurrence}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _legacy_line_hash(outlet_id: int, txn: dict, occurrence: int = 1) -> str:
+    """The pre-UTR hash, retained so older imports still de-duplicate."""
     raw = "|".join([
         "bank", str(outlet_id), txn["date"], str(txn["amount_paise"]),
         (txn.get("ref") or "").strip().upper(),
@@ -67,8 +93,82 @@ def _line_hash(outlet_id: int, txn: dict, occurrence: int = 1) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _historical_matches(db: Session, outlet_id: int, match_keys: set[str],
+                        editable_only: bool = False) -> dict[str, list[Expense]]:
+    """Find earlier expenses with the same parsed statement payee.
+
+    Expenses predate stored payee keys, so the dependable connection is the
+    same counterparty parser that groups the uploaded statement. This remains
+    an owner-confirmed correction: matching text is an invitation to review,
+    never an automatic rewrite.
+    """
+    matches = {key: [] for key in match_keys}
+    if not match_keys:
+        return matches
+    locked_months: set[str] = set()
+    finalized_expense_ids: set[int] = set()
+    if editable_only:
+        locked_months = {
+            f"{year:04d}-{month:02d}"
+            for year, month in db.query(MonthLock.year, MonthLock.month)
+            .filter(MonthLock.outlet_id == outlet_id)
+        }
+        finalized_expense_ids = {
+            expense_id for (expense_id,) in (
+                db.query(PurchaseReceiptLine.expense_id)
+                .join(PurchaseReceipt,
+                      PurchaseReceipt.id == PurchaseReceiptLine.purchase_receipt_id)
+                .filter(PurchaseReceipt.status == "finalized",
+                        PurchaseReceiptLine.expense_id.isnot(None))
+            )
+        }
+    for expense in db.query(Expense).filter(Expense.outlet_id == outlet_id):
+        if expense.id in finalized_expense_ids or expense.business_date[:7] in locked_months:
+            continue
+        key, _ = bankstmt.counterparty(expense.description)
+        if key in matches:
+            matches[key].append(expense)
+    return matches
+
+
+def _suggestion(expenses: list[Expense]) -> dict:
+    """Return a review-required default only when history agrees."""
+    if not expenses:
+        return {
+            "suggested_category_id": None, "suggested_vendor_id": None,
+            "suggested_mode": None, "suggested_from_count": 0,
+        }
+
+    def consensus(values: list[int | str | None]):
+        values = [value for value in values if value is not None]
+        if not values:
+            return None
+        value, count = Counter(values).most_common(1)[0]
+        return value if count / len(values) >= 0.75 else None
+
+    return {
+        "suggested_category_id": consensus([expense.category_id for expense in expenses]),
+        "suggested_vendor_id": consensus([expense.vendor_id for expense in expenses]),
+        "suggested_mode": consensus([expense.mode for expense in expenses]),
+        "suggested_from_count": len(expenses),
+    }
+
+
+def _historical_row(expense: Expense) -> dict:
+    return {
+        "id": expense.id,
+        "business_date": expense.business_date,
+        "amount_paise": expense.amount_paise,
+        "description": expense.description,
+        "category_id": expense.category_id,
+        "vendor_id": expense.vendor_id,
+        "mode": expense.mode,
+    }
+
+
 @router.post("/upload")
-async def upload(file: UploadFile, outlet_id: int,
+async def upload(file: UploadFile, outlet_id: int, account_ending: str = "",
+                 statement_source: str = "auto",
                  user: User = Depends(require_owner),
                  db: Session = Depends(get_db)):
     """Parse a statement and preview it. Nothing is booked here."""
@@ -77,9 +177,30 @@ async def upload(file: UploadFile, outlet_id: int,
     if len(raw) > bankstmt.MAX_BYTES:
         raise HTTPException(413, "Statement file is larger than 25 MB")
     try:
-        statement = bankstmt.parse(raw, file.filename or "statement.csv")
+        statement = bankstmt.parse(raw, file.filename or "statement.csv", statement_source)
     except ValueError as ex:
         raise HTTPException(422, str(ex))
+    selected_account = ""
+    if statement.source == "phonepe":
+        accounts = sorted({txn.account_ending for txn in statement.debits + statement.credits
+                           if txn.account_ending})
+        selected_account = account_ending.strip()
+        if not selected_account and len(accounts) == 1:
+            selected_account = accounts[0]
+        if not selected_account and len(accounts) > 1:
+            suffixes = ", ".join(accounts)
+            raise HTTPException(
+                422,
+                f"This PhonePe export includes multiple accounts ({suffixes}). "
+                "Enter the last four digits of the business account and upload again.",
+            )
+        if selected_account and selected_account not in accounts:
+            raise HTTPException(422, "That account ending is not present in this PhonePe export.")
+        if selected_account:
+            statement.debits = [txn for txn in statement.debits
+                                if txn.account_ending == selected_account]
+            statement.credits = [txn for txn in statement.credits
+                                 if txn.account_ending == selected_account]
 
     rules = {r.match_key: r for r in db.query(BankRule).all()}
     seen = {
@@ -94,6 +215,7 @@ async def upload(file: UploadFile, outlet_id: int,
 
     txns: list[dict] = []
     occurrences: Counter[str] = Counter()
+    legacy_occurrences: Counter[str] = Counter()
     for txn in statement.debits:
         key, label = bankstmt.counterparty(txn.narration)
         channel, mode = bankstmt.classify(txn.narration)
@@ -106,8 +228,16 @@ async def upload(file: UploadFile, outlet_id: int,
         }
         occurrences[base := _line_hash(outlet_id, row)] += 1
         row["hash"] = _line_hash(outlet_id, row, occurrences[base])
-        row["already_imported"] = row["hash"] in seen
+        legacy_occurrences[legacy_base := _legacy_line_hash(outlet_id, row)] += 1
+        row["legacy_hash"] = _legacy_line_hash(
+            outlet_id, row, legacy_occurrences[legacy_base])
+        row["already_imported"] = row["hash"] in seen or row["legacy_hash"] in seen
         txns.append(row)
+
+    possible_duplicates = candidate_map(db, outlet_id, txns)
+    for row in txns:
+        row["possible_duplicates"] = [] if row["already_imported"] else possible_duplicates.get(
+            (row["date"], row["amount_paise"]), [])
 
     credits: list[dict] = []
     credit_occurrences: Counter[str] = Counter()
@@ -129,29 +259,49 @@ async def upload(file: UploadFile, outlet_id: int,
             "match_key": row["match_key"], "label": row["label"],
             "channel": row["channel"], "mode": row["mode"],
             "count": 0, "total_paise": 0, "new_count": 0,
-            "dates": [],
+            "dates": [], "modes": set(), "possible_duplicate_count": 0,
+            "possible_duplicates": [],
         })
         group["count"] += 1
         group["total_paise"] += row["amount_paise"]
         group["dates"].append(row["date"])
+        group["modes"].add(row["mode"])
         if not row["already_imported"]:
             group["new_count"] += 1
+        if row["possible_duplicates"]:
+            group["possible_duplicate_count"] += 1
+            group["possible_duplicates"].extend(row["possible_duplicates"])
 
     for group in groups.values():
         rule = rules.get(group["match_key"])
         group["date_from"] = min(group["dates"])
         group["date_to"] = max(group["dates"])
         group.pop("dates")
+        group["detected_modes"] = sorted(group.pop("modes"))
         group["total_rupees"] = round(group["total_paise"] / 100, 2)
+        group["possible_duplicates"] = list({
+            row["id"]: row for row in group["possible_duplicates"]
+        }.values())
         group["rule_id"] = rule.id if rule else None
         group["category_id"] = rule.category_id if rule else None
         group["vendor_id"] = rule.vendor_id if rule else None
         if rule:
-            group["mode"] = rule.mode
             group["skip"] = bool(rule.skip)
         else:
             group["skip"] = group["channel"] in NEVER_EXPENSE
         group["known"] = rule is not None
+
+    historical = _historical_matches(db, outlet_id, set(groups))
+    editable_historical = _historical_matches(
+        db, outlet_id, set(groups), editable_only=True)
+    for key, group in groups.items():
+        prior = editable_historical[key]
+        group["previous_count"] = len(prior)
+        # Enough evidence to make an informed choice without bloating a large
+        # import preview. The commit rechecks the complete candidate set.
+        group["previous_matches"] = [_historical_row(expense) for expense in prior[:3]]
+        if not rules.get(key):
+            group.update(_suggestion(historical[key]))
 
     ordered = sorted(groups.values(), key=lambda g: -g["total_paise"])
     new_rows = [t for t in txns if not t["already_imported"]]
@@ -179,6 +329,8 @@ async def upload(file: UploadFile, outlet_id: int,
     return {
         "batch_id": batch.id,
         "filename": batch.filename,
+        "source": statement.source,
+        "account_ending": selected_account,
         "date_from": dates[0] if dates else None,
         "date_to": dates[-1] if dates else None,
         "debits": len(txns),
@@ -205,6 +357,10 @@ class Decision(BaseModel):
     mode: str = "bank"
     skip: bool = False
     remember: bool = True
+    include_possible_duplicates: bool = False
+    include_possible_duplicate_hashes: list[str] = []
+    use_detected_mode: bool = True
+    update_previous: bool = False
 
 
 class CommitIn(BaseModel):
@@ -260,6 +416,16 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
            decisions: list[Decision], user: User) -> dict:
     outlet_id = batch.outlet_id
     chosen = {d.match_key: d for d in decisions}
+    selected_possible_duplicates = {
+        decision.match_key: set(decision.include_possible_duplicate_hashes)
+        for decision in decisions
+    }
+
+    def includes_possible_duplicate(txn: dict, decision: Decision) -> bool:
+        return (not txn.get("possible_duplicates")
+                or decision.include_possible_duplicates
+                or txn["hash"] in selected_possible_duplicates.get(
+                    decision.match_key, set()))
 
     seen = {
         key for (key,) in db.query(Expense.idempotency_key)
@@ -267,24 +433,60 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
                 Expense.idempotency_key.isnot(None))
     }
 
-    created = skipped = duplicates = 0
+    created = skipped = duplicates = possible_duplicates_skipped = 0
     unmapped: set[str] = set()
     vendor_cache: dict[str, int] = {}
 
     # A statement is always imported after the fact, so validate every
     # affected period before this batch writes anything.
     bookable = [t for t in parsed["txns"]
-                if (d := chosen.get(t["match_key"])) is not None and not d.skip]
+                if (d := chosen.get(t["match_key"])) is not None and not d.skip
+                and includes_possible_duplicate(t, d)]
     if bookable:
         check_edit_window(min(t["date"] for t in bookable), user, db)
     assert_dates_open(db, outlet_id, {
         t["date"] for t in bookable + parsed.get("credits", [])
     })
 
+    requested_backfills = {
+        decision.match_key: decision for decision in decisions
+        if decision.update_previous and not decision.skip
+        and decision.category_id is not None
+    }
+    for decision in requested_backfills.values():
+        if db.get(ExpenseCategory, decision.category_id) is None:
+            raise HTTPException(422, "Unknown expense category for historical update")
+        if decision.vendor_id is None and decision.vendor_name.strip():
+            decision.vendor_id = _ensure_vendor(
+                db, decision.vendor_name.strip(), vendor_cache)
+        if decision.vendor_id is not None and db.get(Vendor, decision.vendor_id) is None:
+            raise HTTPException(422, "Unknown vendor for historical update")
+    historical = _historical_matches(
+        db, outlet_id, set(requested_backfills), editable_only=True)
+    backfills: list[tuple[Expense, Decision]] = []
+    for match_key, prior_expenses in historical.items():
+        decision = requested_backfills[match_key]
+        for expense in prior_expenses:
+            mode = expense.mode if decision.use_detected_mode else (
+                decision.mode if decision.mode in VALID_MODES else "bank")
+            if (expense.category_id != decision.category_id
+                    or expense.vendor_id != decision.vendor_id
+                    or expense.mode != mode):
+                backfills.append((expense, decision))
+    if backfills:
+        check_edit_window(min(expense.business_date for expense, _ in backfills), user, db)
+        assert_dates_open(db, outlet_id, {
+            expense.business_date for expense, _ in backfills
+        })
+
     for txn in parsed["txns"]:
         decision = chosen.get(txn["match_key"])
         if decision is None or decision.skip:
             skipped += 1
+            continue
+        if not includes_possible_duplicate(txn, decision):
+            skipped += 1
+            possible_duplicates_skipped += 1
             continue
         if decision.category_id is None:
             unmapped.add(txn["match_key"])
@@ -298,7 +500,10 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
         if category is None:
             raise HTTPException(422, f"Unknown expense category for {txn['label']}")
 
-        mode = decision.mode if decision.mode in VALID_MODES else "bank"
+        # The transaction rail is a fact from the statement, not a merchant
+        # preference: a supplier can be paid by UPI this month and NEFT next.
+        mode = (txn["mode"] if decision.use_detected_mode
+                else decision.mode if decision.mode in VALID_MODES else "bank")
         vendor_id = decision.vendor_id
         if vendor_id is None and decision.vendor_name.strip():
             vendor_id = _ensure_vendor(db, decision.vendor_name.strip(),
@@ -314,6 +519,20 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
             entered_by=user.id, idempotency_key=txn["hash"]))
         seen.add(txn["hash"])
         created += 1
+
+    updated_previous = 0
+    for expense, decision in backfills:
+        expense.category_id = decision.category_id
+        expense.vendor_id = decision.vendor_id
+        if not decision.use_detected_mode:
+            expense.mode = decision.mode if decision.mode in VALID_MODES else "bank"
+        expense.updated_at = utcnow()
+        expense.updated_by = user.id
+        sync_credit_entry_for_expense(db, expense, user.id)
+        updated_previous += 1
+    if updated_previous:
+        audit(db, None, user.id, "bank-import-update-previous", "import_batch",
+              batch.id, after={"updated_expenses": updated_previous})
 
     credit_seen = {
         key for (key,) in db.query(BankCredit.line_hash)
@@ -337,8 +556,10 @@ def _apply(db: Session, batch: ImportBatch, parsed: dict,
     db.flush()
     return {
         "created": created, "skipped": skipped, "duplicates": duplicates,
+        "possible_duplicates_skipped": possible_duplicates_skipped,
         "rules_saved": rules_saved, "credits_created": credits_created,
         "credits_duplicates": credits_duplicates,
+        "updated_previous": updated_previous,
         "unmapped": sorted(unmapped),
     }
 
@@ -464,7 +685,8 @@ def _save_rules(db: Session, decisions: list[Decision], parsed: dict,
         rule.label = (labels.get(decision.match_key) or decision.match_key)[:120]
         rule.category_id = decision.category_id
         rule.vendor_id = vendor_id
-        rule.mode = decision.mode if decision.mode in VALID_MODES else "bank"
+        if not decision.use_detected_mode:
+            rule.mode = decision.mode if decision.mode in VALID_MODES else "bank"
         rule.skip = decision.skip
         rule.hits = (rule.hits or 0) + counts.get(decision.match_key, 0)
         saved += 1

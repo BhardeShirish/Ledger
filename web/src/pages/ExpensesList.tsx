@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Camera, ScanText, Pencil, Plus, Trash2, X } from "lucide-react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { moneyCfg } from "../lib/format";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
 import { useGuarded } from "../lib/auth";
@@ -15,6 +15,10 @@ import {
 import { EmptyMonthHint } from "../components/EmptyMonthHint";
 
 type Ctx = { outletId: number };
+type DuplicateWarning = {
+  body: any; bulk: boolean;
+  candidates: { id: number; business_date: string; amount_paise: number; description: string }[];
+};
 
 export default function ExpensesList() {
   const { outletId } = useOutletContext<Ctx>();
@@ -24,6 +28,7 @@ export default function ExpensesList() {
   const [editing, setEditing] = useState<any | null>(null);
   const [monthOffset, setMonthOffset] = useState(0);
   const [notice, setNotice] = useState("");
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateWarning | null>(null);
 
   const period = useMemo(() => {
     const d = new Date();
@@ -64,6 +69,12 @@ export default function ExpensesList() {
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
     },
+    onError: (error: unknown, body) => {
+      const detail = error instanceof ApiError ? error.detail as any : null;
+      if (detail?.code === "possible_duplicate") {
+        setDuplicateWarning({ body, bulk: false, candidates: detail.candidates ?? [] });
+      }
+    },
   });
 
   const createBulk = useMutation({
@@ -74,6 +85,12 @@ export default function ExpensesList() {
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["unit-econ"] });
+    },
+    onError: (error: unknown, body) => {
+      const detail = error instanceof ApiError ? error.detail as any : null;
+      if (detail?.code === "possible_duplicate") {
+        setDuplicateWarning({ body, bulk: true, candidates: detail.candidates ?? [] });
+      }
     },
   });
 
@@ -158,10 +175,43 @@ export default function ExpensesList() {
         cats={cats.data ?? []}
         vendors={vendors.data ?? []}
         busy={create.isPending || createBulk.isPending}
-        err={create.error?.message ?? createBulk.error?.message ?? ""}
+        err={(create.error as Error | null)?.message
+          ?? (createBulk.error as Error | null)?.message ?? ""}
         onSubmit={(body) => create.mutate(body)}
         onSubmitBulk={(body) => createBulk.mutate(body)}
       />
+      <Sheet open={duplicateWarning !== null} onClose={() => setDuplicateWarning(null)}
+             title="Possible duplicate">
+        <div className="space-y-4">
+          <p className="text-sm text-ink-soft">
+            An expense with the same date and amount is already recorded. Check it before adding another.
+          </p>
+          <div className="space-y-2">
+            {duplicateWarning?.candidates.map((row) => (
+              <div key={row.id} className="rounded-md border border-rule bg-paper-2 px-3 py-2 text-sm">
+                <div className="flex justify-between gap-2 font-medium">
+                  <span>{fmtDateShort(row.business_date)}</span>
+                  <span className="num">{inr(row.amount_paise)}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-ink-faint">{row.description}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDuplicateWarning(null)}>Review entry</Button>
+            <Button variant="danger" onClick={() => {
+              const warning = duplicateWarning;
+              setDuplicateWarning(null);
+              if (!warning) return;
+              const body = { ...warning.body, confirm_possible_duplicate: true };
+              if (warning.bulk) createBulk.mutate(body);
+              else create.mutate(body);
+            }}>
+              Add anyway
+            </Button>
+          </div>
+        </div>
+      </Sheet>
     </div>
   );
 }
@@ -475,11 +525,26 @@ export function AddExpenseSheet(props: {
   const cleanLines = lines
     .map((l) => ({ ...l }))
     .filter((l) => l.item.trim() && Number(l.amount) > 0);
+  const linesPaise = cleanLines.reduce(
+    (sum, line) => sum + Math.round((Number(line.amount) + Number.EPSILON) * 100), 0);
+  const hasBillTotal = billTotal.trim() !== "";
+  const billTotalValue = Number(billTotal);
+  const billTotalValid = !hasBillTotal
+    || (Number.isFinite(billTotalValue) && billTotalValue >= 0);
+  const billTotalPaise = billTotalValid && hasBillTotal
+    ? Math.round((billTotalValue + Number.EPSILON) * 100) : 0;
+  const linesExceedBillTotal = hasBillTotal && billTotalValid && linesPaise > billTotalPaise;
+  const billTotalError = !billTotalValid
+    ? "Enter a finite printed bill total of ₹0 or more."
+    : linesExceedBillTotal
+      ? `Item lines total ${moneyCfg.symbol}${(linesPaise / 100).toFixed(2)}, which exceeds the printed bill total. Reduce the line amounts or correct the bill total.`
+      : "";
 
   const submit = () => {
     if (!catId) { setFormErr("Choose a category before saving."); return; }
     if (multi) {
       if (!cleanLines.length) { setFormErr("Add at least one item with an amount."); return; }
+      if (billTotalError) { setFormErr(billTotalError); return; }
       const anyQty = cleanLines.some((l) => Number(l.qty) > 0);
       if (anyQty && !vendorId) { setFormErr("Choose or add a vendor to track item quantities."); return; }
       setFormErr("");
@@ -581,23 +646,22 @@ export function AddExpenseSheet(props: {
                 <div key={l.id}
                      className="grid grid-cols-[56px_52px_1fr_44px] items-center gap-1.5
                                 sm:grid-cols-[1fr_62px_58px_88px_44px]">
-                  <Input placeholder="Item" value={l.item}
+                  <Input size="compact" placeholder="Item" value={l.item}
                          aria-label={`Item ${i + 1}`}
                          autoFocus={l.id === focusLine}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, item: e.target.value } : y))}
-                         className="col-span-4 !py-1.5 text-sm sm:col-span-1" />
-                  <Input inputMode="decimal" placeholder="qty" value={l.qty}
+                         className="col-span-4 sm:col-span-1" />
+                  <Input size="compact" inputMode="decimal" placeholder="qty" value={l.qty}
                          aria-label={`Quantity for item ${i + 1}`}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, qty: e.target.value } : y))}
-                         className="!py-1.5 text-right num text-sm" />
-                  <Input placeholder="kg" value={l.unit}
+                         className="text-right" />
+                  <Input size="compact" placeholder="kg" value={l.unit}
                          aria-label={`Unit for item ${i + 1}`}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
-                           j === i ? { ...y, unit: e.target.value } : y))}
-                         className="!py-1.5 text-sm" />
-                  <Input inputMode="decimal" placeholder="₹" value={l.amount}
+                           j === i ? { ...y, unit: e.target.value } : y))} />
+                  <Input size="compact" inputMode="decimal" placeholder="₹" value={l.amount}
                          aria-label={`Amount for item ${i + 1}`}
                          // Enter at the end of a row starts the next one, so a
                          // 20-item bill is typed without ever leaving the keys.
@@ -606,12 +670,11 @@ export function AddExpenseSheet(props: {
                          }}
                          onChange={(e) => setLines((x) => x.map((y, j) =>
                            j === i ? { ...y, amount: e.target.value } : y))}
-                         className="!py-1.5 text-right num text-sm" />
+                         className="text-right" />
                   <button onClick={() => setLines((x) => x.filter((_, j) => j !== i))}
                           aria-label={`Remove line ${i + 1}`}
                           className="flex h-11 w-11 items-center justify-center rounded-md
-                                     text-ink-faint hover:bg-paper-3 hover:text-bad
-                                     sm:h-9 sm:w-9"><X size={15} /></button>
+                                     text-ink-faint hover:bg-paper-3 hover:text-bad"><X size={15} /></button>
                 </div>
               ))}
             </div>
@@ -624,17 +687,25 @@ export function AddExpenseSheet(props: {
             </button>
             <div className="mt-2 flex items-center gap-2 border-t border-rule pt-2">
               <span className="text-xs text-ink-faint">Printed bill total (optional — difference booked as other charges)</span>
-              <Input inputMode="decimal" placeholder="₹ bill total" value={billTotal}
-                     onChange={(e) => setBillTotal(e.target.value)} className="ml-auto !w-32 !py-1.5 text-right num text-sm" />
+              <Input size="compact" inputMode="decimal" placeholder="₹ bill total" value={billTotal}
+                     aria-label="Printed bill total"
+                     aria-invalid={Boolean(billTotalError)}
+                     aria-describedby={billTotalError ? "printed-bill-total-error" : undefined}
+                     onChange={(e) => setBillTotal(e.target.value)} className="ml-auto !w-32 text-right" />
             </div>
+            {billTotalError && (
+              <p id="printed-bill-total-error" role="alert" className="mt-1.5 text-xs text-bad">
+                {billTotalError}
+              </p>
+            )}
           </div>
         )}
 
         <Field label="Category">
           <div className="flex flex-wrap gap-1.5">
             {(props.cats.length > 10) && (
-              <Input placeholder="Filter categories…" value={catFilter}
-                     onChange={(e) => setCatFilter(e.target.value)} className="!py-1.5 mb-1 text-sm" />
+              <Input size="compact" placeholder="Filter categories…" value={catFilter}
+                     onChange={(e) => setCatFilter(e.target.value)} className="mb-1" />
             )}
             {props.cats.filter((c) => c.is_active)
               .filter((c) => !catFilter || c.name.toLowerCase().includes(catFilter.toLowerCase()))
@@ -694,7 +765,7 @@ export function AddExpenseSheet(props: {
           <Input placeholder="Search or type a new name…" value={vendorQ}
                  onChange={(e) => { setVendorQ(e.target.value); setVendorId(null); }} />
           {vendorQ && (
-            <div className="mt-1 rounded-md border border-rule bg-paper shadow-sm">
+            <div className="mt-1 rounded-md border border-rule bg-paper">
               {matches.slice(0, 5).map((v) => (
                 <button key={v.id} onClick={() => { setVendorId(v.id); setVendorQ(v.name); }}
                         className="block w-full px-3 py-2 text-left text-sm hover:bg-paper-3">
@@ -788,7 +859,7 @@ export function AddExpenseSheet(props: {
         <ErrorNote msg={formErr || props.err} />
         <Button size="lg" className="w-full"
                 disabled={!catId || props.busy ||
-                          (multi ? !cleanLines.length : !amount)}
+                          (multi ? !cleanLines.length || Boolean(billTotalError) : !amount)}
                 onClick={submit}>
           {props.busy ? "Saving…" : multi
             ? `Save bill · ${lines.reduce((s, l) => s + (Number(l.amount) || 0), 0).toFixed(2)}`

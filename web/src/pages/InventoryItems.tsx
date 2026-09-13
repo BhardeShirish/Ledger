@@ -1,13 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { Pencil } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth, useGuarded } from "../lib/auth";
 import { inr } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import {
-  Badge, Button, Card, ErrorNote, Field, Input, SectionLabel, Sheet, Spinner,
+  Badge, Button, Card, EmptyState, ErrorNote, Field, Input, SectionLabel, Sheet, Spinner,
 } from "../components/ui";
+
+const BLANK_ITEM = {
+  name: "", base_unit: "kg", par_qty: "", min_qty: "", yield_percent: "100", opening_qty: "",
+};
 
 export default function InventoryItems() {
   const { outletId } = useOutletContext<{ outletId: number }>();
@@ -25,9 +30,22 @@ export default function InventoryItems() {
 
   return (
     <div className="space-y-4">
-      {me?.role === "owner" && (
+      {me?.role === "owner" && rows.length > 0 && (
         <Button size="sm" onClick={() => setAdding(true)}>+ Add stock item</Button>
       )}
+      {rows.length === 0 ? (
+        <Card className="overflow-hidden">
+          <EmptyState
+            title="No stock items yet"
+            hint={me?.role === "owner"
+              ? "Stock items are the ingredients you count, price and reorder. Add the first one to start a stock ledger."
+              : "Stock items are the ingredients you count, price and reorder. An owner adds them before anything appears here."}
+            action={me?.role === "owner"
+              ? <Button className="mt-2" onClick={() => setAdding(true)}>Add stock item</Button>
+              : undefined}
+          />
+        </Card>
+      ) : (
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -55,7 +73,7 @@ export default function InventoryItems() {
                 <td className="num px-2 py-2 text-right">{inr(Math.round(r.value_rupees * 100))}</td>
                 {me?.role === "owner" && (
                   <td className="px-2 py-2 text-right">
-                    <button onClick={() => setEditing(r)}
+                    <button type="button" aria-label={`Edit ${r.name}`} onClick={() => setEditing(r)}
                             className="p-1 text-ink-faint hover:text-accent"><Pencil size={14} /></button>
                   </td>
                 )}
@@ -64,8 +82,9 @@ export default function InventoryItems() {
           </tbody>
         </table>
       </Card>
+      )}
 
-      <EditItem item={editing} onClose={() => setEditing(null)} outletId={outletId}
+      <EditItem key={editing?.id ?? "none"} item={editing} onClose={() => setEditing(null)} outletId={outletId}
                 onDone={() => { setEditing(null); qc.invalidateQueries({ queryKey: ["inv-items"] }); }} />
       <AddItem open={adding} onClose={() => setAdding(false)} outletId={outletId}
                onDone={() => { setAdding(false); qc.invalidateQueries({ queryKey: ["inv-items"] }); }} />
@@ -75,11 +94,12 @@ export default function InventoryItems() {
 
 function EditItem({ item, onClose, outletId, onDone }: any) {
   const guarded = useGuarded();
-  const [f, setF] = useState(() => ({
+  const saved = useMemo(() => ({
     name: item?.name ?? "", base_unit: item?.base_unit ?? "kg",
     par_qty: String(item?.par_qty ?? ""), min_qty: String(item?.min_qty ?? ""),
     yield_percent: String(item?.yield_percent ?? 100),
-  }));
+  }), [item]);
+  const [f, setF] = useState(() => saved);
   const set = (k: string) => (e: any) => setF((x: any) => ({ ...x, [k]: e.target.value }));
   const save = useMutation({
     mutationFn: () => guarded(() => api.patch(`/inventory/items/${item.id}`, {
@@ -89,18 +109,14 @@ function EditItem({ item, onClose, outletId, onDone }: any) {
     })),
     onSuccess: onDone,
   });
-  useEffect(() => {
-    if (item) {
-      setF({
-        name: item.name ?? "", base_unit: item.base_unit ?? "kg",
-        par_qty: String(item.par_qty ?? ""), min_qty: String(item.min_qty ?? ""),
-        yield_percent: String(item.yield_percent ?? 100),
-      });
-    }
-  }, [item]);
+  const draft = useDirtyDraft({
+    open: Boolean(item), label: `edit of ${item?.name ?? "this stock item"}`,
+    values: f, pristine: saved,
+    discard: () => { setF(saved); onClose(); },
+  });
   if (!item) return null;
   return (
-    <Sheet open onClose={onClose} title={`Edit ${item.name}`}>
+    <Sheet open onClose={draft.close} title={`Edit ${item.name}`}>
       <div className="space-y-3">
         <Field label="Name"><Input value={f.name} onChange={set("name")} /></Field>
         <div className="grid grid-cols-3 gap-3">
@@ -119,7 +135,7 @@ function EditItem({ item, onClose, outletId, onDone }: any) {
 
 function AddItem({ open, onClose, outletId, onDone }: any) {
   const guarded = useGuarded();
-  const [f, setF] = useState({ name: "", base_unit: "kg", par_qty: "", min_qty: "", yield_percent: "100", opening_qty: "" });
+  const [f, setF] = useState(BLANK_ITEM);
   const [err, setErr] = useState("");
   const set = (k: string) => (e: any) => setF((x: any) => ({ ...x, [k]: e.target.value }));
   const save = useMutation({
@@ -129,11 +145,16 @@ function AddItem({ open, onClose, outletId, onDone }: any) {
       yield_percent: Number(f.yield_percent) || 100,
       opening_qty: Number(f.opening_qty) || undefined,
     })),
-    onSuccess: onDone,
+    onSuccess: () => { setF(BLANK_ITEM); setErr(""); onDone(); },
     onError: (e: any) => setErr(e.message),
   });
+  const draft = useDirtyDraft({
+    open, label: "new stock item",
+    values: f, pristine: BLANK_ITEM,
+    discard: () => { setF(BLANK_ITEM); setErr(""); onClose(); },
+  });
   return (
-    <Sheet open={open} onClose={onClose} title="Add stock item">
+    <Sheet open={open} onClose={draft.close} title="Add stock item">
       <div className="space-y-3">
         <Field label="Name"><Input autoFocus value={f.name} onChange={set("name")} /></Field>
         <div className="grid grid-cols-3 gap-3">

@@ -1,14 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { inr, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import { Badge, Button, Card, EmptyState, ErrorNote, Field, Input, SectionLabel, Select, Sheet, Spinner } from "../components/ui";
 
 type DraftLine = { item_name: string; quantity: string; unit: string; unit_cost_rupees: string };
 const blankLine = (): DraftLine => ({ item_name: "", quantity: "", unit: "kg", unit_cost_rupees: "" });
+const blankOrder = () => ({
+  vendorId: "", categoryId: "", mode: "credit", expectedDate: "", note: "",
+  lines: [blankLine()],
+});
+/** What a receipt shows before anyone edits it: the approved order, priced as planned. */
+const plannedReceipt = (order: any) => ({
+  date: todayISO(),
+  lines: (order?.lines ?? []).map((line: any) => ({
+    order_line_id: line.id, received_quantity: String(line.quantity),
+    unit_price_rupees: String(line.unit_cost_paise / 100), unit: line.unit,
+  })),
+});
 
 export default function PurchaseOrders() {
   const { outletId } = useOutletContext<{ outletId: number }>();
@@ -80,7 +93,7 @@ export default function PurchaseOrders() {
         ))}
       </Card>
       <OrderSheet open={creating} outletId={outletId} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); refresh(); }} />
-      <ReceiptSheet order={receiving} onClose={() => setReceiving(null)} onSaved={() => { setReceiving(null); refresh(); }} />
+      <ReceiptSheet key={receiving?.id ?? "none"} order={receiving} onClose={() => setReceiving(null)} onSaved={() => { setReceiving(null); refresh(); }} />
     </div>
   );
 }
@@ -110,12 +123,17 @@ function ReceiptSummary({ receipt }: { receipt: any }) {
 }
 
 function OrderSheet({ open, outletId, onClose, onSaved }: { open: boolean; outletId: number; onClose: () => void; onSaved: () => void }) {
-  const [vendorId, setVendorId] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [mode, setMode] = useState("credit");
-  const [expectedDate, setExpectedDate] = useState("");
-  const [note, setNote] = useState("");
-  const [lines, setLines] = useState<DraftLine[]>([blankLine()]);
+  const blank = useMemo(blankOrder, []);
+  const [vendorId, setVendorId] = useState(blank.vendorId);
+  const [categoryId, setCategoryId] = useState(blank.categoryId);
+  const [mode, setMode] = useState(blank.mode);
+  const [expectedDate, setExpectedDate] = useState(blank.expectedDate);
+  const [note, setNote] = useState(blank.note);
+  const [lines, setLines] = useState<DraftLine[]>(blank.lines);
+  const reset = () => {
+    setVendorId(blank.vendorId); setCategoryId(blank.categoryId); setMode(blank.mode);
+    setExpectedDate(blank.expectedDate); setNote(blank.note); setLines(blankOrder().lines);
+  };
   const vendors = useQuery({ queryKey: ["vendors"], queryFn: () => api.get("/vendors"), enabled: open });
   const categories = useQuery({ queryKey: ["categories"], queryFn: () => api.get("/lists/categories"), enabled: open });
   const create = useMutation({
@@ -124,13 +142,18 @@ function OrderSheet({ open, outletId, onClose, onSaved }: { open: boolean; outle
       expected_date: expectedDate || null, note,
       lines: lines.map((line) => ({ ...line, quantity: Number(line.quantity), unit_cost_rupees: Number(line.unit_cost_rupees) })),
     }),
-    onSuccess: () => { setLines([blankLine()]); setVendorId(""); setCategoryId(""); setNote(""); onSaved(); },
+    onSuccess: () => { reset(); onSaved(); },
+  });
+  const draft = useDirtyDraft({
+    open, label: "purchase order draft",
+    values: { vendorId, categoryId, mode, expectedDate, note, lines }, pristine: blank,
+    discard: () => { reset(); onClose(); },
   });
   const updateLine = (index: number, field: keyof DraftLine, value: string) =>
     setLines((old) => old.map((line, i) => i === index ? { ...line, [field]: value } : line));
   const valid = Boolean(vendorId && categoryId && lines.length && lines.every((line) => line.item_name.trim() && line.unit.trim() && line.quantity !== "" && Number(line.quantity) >= 0 && line.unit_cost_rupees !== "" && Number(line.unit_cost_rupees) >= 0));
   return (
-    <Sheet open={open} onClose={onClose} title="Plan purchase order" wide>
+    <Sheet open={open} onClose={draft.close} title="Plan purchase order" wide>
       <div className="space-y-4">
         <p className="text-sm text-ink-faint">A draft does not change stock, expenses, or supplier dues. Owner approval is required before receiving.</p>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -159,13 +182,9 @@ function OrderSheet({ open, outletId, onClose, onSaved }: { open: boolean; outle
 }
 
 function ReceiptSheet({ order, onClose, onSaved }: { order: any | null; onClose: () => void; onSaved: () => void }) {
-  const [date, setDate] = useState(todayISO());
-  const [lines, setLines] = useState<any[]>([]);
-  useEffect(() => {
-    if (!order) return;
-    setDate(todayISO());
-    setLines(order.lines.map((line: any) => ({ order_line_id: line.id, received_quantity: String(line.quantity), unit_price_rupees: String(line.unit_cost_paise / 100), unit: line.unit })));
-  }, [order]);
+  const planned = useMemo(() => plannedReceipt(order), [order]);
+  const [date, setDate] = useState(planned.date);
+  const [lines, setLines] = useState<any[]>(planned.lines);
   const receive = useMutation({
     mutationFn: () => api.post(`/purchases/orders/${order.id}/receive`, {
       business_date: date, lines: lines.map((line) => ({ ...line, received_quantity: Number(line.received_quantity), unit_price_rupees: Number(line.unit_price_rupees) })),
@@ -173,11 +192,16 @@ function ReceiptSheet({ order, onClose, onSaved }: { order: any | null; onClose:
     }),
     onSuccess: onSaved,
   });
+  const draft = useDirtyDraft({
+    open: order != null, label: `receipt for PO #${order?.id ?? ""}`,
+    values: { date, lines }, pristine: planned,
+    discard: () => { setDate(planned.date); setLines(planned.lines); onClose(); },
+  });
   if (!order) return null;
   const change = (index: number, field: string, value: string) => setLines((old) => old.map((line, i) => i === index ? { ...line, [field]: value } : line));
   const valid = lines.length === order.lines.length && lines.every((line) => line.received_quantity !== "" && Number(line.received_quantity) >= 0 && line.unit_price_rupees !== "" && Number(line.unit_price_rupees) >= 0);
   return (
-    <Sheet open onClose={onClose} title={`Receive PO #${order.id}`} wide>
+    <Sheet open onClose={draft.close} title={`Receive PO #${order.id}`} wide>
       <div className="space-y-4">
         <p className="text-sm text-ink-faint">Enter what arrived. Short quantities and price differences are shown against the approved order. Finalizing posts the expenses and stock once; it cannot be edited.</p>
         <Field label="Receipt date"><Input type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} /></Field>

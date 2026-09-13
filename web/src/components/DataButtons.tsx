@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Download, FileSpreadsheet, Upload } from "lucide-react";
 import { api, downloadFile } from "../api/client";
-import { Button, Sheet } from "./ui";
+import { Button, ErrorNote, Sheet } from "./ui";
 
 const qs = (params?: Record<string, any>) => {
   const p = new URLSearchParams();
@@ -62,7 +62,7 @@ export function ImportButtons({ entity, outletId, onDone }: {
       <Sheet open={result != null || err !== ""}
              onClose={() => { setResult(null); setErr(""); }}
              title="Import result">
-        {err ? <p className="text-sm text-bad">{err}</p> : result && (
+        {err ? <ErrorNote msg={err} /> : result && (
           <div className="space-y-2 text-sm">
             <p><b className="num">{result.created}</b> rows imported ·{" "}
                <b className="num">{result.skipped}</b> skipped</p>

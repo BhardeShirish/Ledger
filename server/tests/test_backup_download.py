@@ -57,4 +57,3 @@ def test_download_contains_data_committed_moments_earlier(client, tmp_path):
         conn.close()
 
     assert rows == [(1234,)], "the backup is missing an expense saved before it"
-

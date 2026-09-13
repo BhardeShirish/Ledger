@@ -183,14 +183,19 @@ def test_the_database_itself_refuses_a_duplicate_key(client, outlet_id):
         db.close()
 
 
-def test_hand_entered_expenses_are_never_blocked_by_that_index(client, outlet_id):
-    """Two identical manual expenses are legitimate - both carry no key."""
+def test_hand_entered_expenses_can_be_confirmed_after_duplicate_warning(client, outlet_id):
+    """A legitimate duplicate remains possible after the warning."""
     stepup(client)
     cat = cat_id(client)
     body = {"outlet_id": outlet_id, "business_date": "2024-04-01",
             "category_id": cat, "amount_rupees": 250, "mode": "cash",
             "description": "Tea"}
-    for _ in range(2):
-        r = client.post("/api/expenses", json=body)
-        assert r.status_code == 201, r.text
+    first = client.post("/api/expenses", json=body)
+    assert first.status_code == 201, first.text
+    warned = client.post("/api/expenses", json=body)
+    assert warned.status_code == 409, warned.text
+    confirmed = client.post("/api/expenses", json={
+        **body, "confirm_possible_duplicate": True,
+    })
+    assert confirmed.status_code == 201, confirmed.text
     assert ledger(client, outlet_id) == (2, 50000)

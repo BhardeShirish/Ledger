@@ -148,11 +148,15 @@ def _shape(db: Session, r: RecurringCost) -> dict:
 
 
 @router.get("")
-def list_recurring(user: User = Depends(current_user),
+def list_recurring(outlet_id: int | None = None, user: User = Depends(current_user),
                    db: Session = Depends(get_db)):
     post_due(db)
+    outlets = user_outlet_ids(db, user)
+    if outlet_id is not None:
+        assert_outlet_access(db, user, outlet_id)
+        outlets = [outlet_id]
     rows = (db.query(RecurringCost)
-              .filter(RecurringCost.outlet_id.in_(user_outlet_ids(db, user)))
+              .filter(RecurringCost.outlet_id.in_(outlets))
               .order_by(RecurringCost.id).all())
     active = [r for r in rows if r.is_active]
     return {
@@ -180,7 +184,13 @@ def _check(db: Session, body: RecurringIn) -> None:
 def add_recurring(body: RecurringIn, user: User = Depends(require_owner),
                   db: Session = Depends(get_db)):
     _check(db, body)
-    outlet_id = body.outlet_id or 1
+    outlets = user_outlet_ids(db, user)
+    if body.outlet_id is None:
+        if len(outlets) != 1:
+            raise HTTPException(422, "Choose an outlet for this monthly cost.")
+        outlet_id = outlets[0]
+    else:
+        outlet_id = body.outlet_id
     assert_outlet_access(db, user, outlet_id)
     r = RecurringCost(
         outlet_id=outlet_id, category_id=body.category_id,
@@ -241,6 +251,25 @@ def stop_recurring(cost_id: int, user: User = Depends(require_owner),
     audit(db, None, user.id, "deactivate", "recurring_cost", r.id)
     db.commit()
     return {"ok": True, "kept_past_entries": True}
+
+
+@router.post("/{cost_id}/restart")
+def restart_recurring(cost_id: int, user: User = Depends(require_owner),
+                      db: Session = Depends(get_db)):
+    """Resume a stopped cost from this month without filling its stopped gap."""
+    r = db.get(RecurringCost, cost_id)
+    if r is None:
+        raise HTTPException(404, "Not found")
+    assert_outlet_access(db, user, r.outlet_id)
+    if not r.is_active:
+        r.is_active = True
+        r.start_month = _today().isoformat()[:7]
+        r.end_month = None
+        audit(db, None, user.id, "restart", "recurring_cost", r.id,
+              after={"start_month": r.start_month})
+        db.commit()
+    posted = post_due(db)
+    return {**_shape(db, r), "posted_now": posted}
 
 
 @router.post("/{cost_id}/review")

@@ -39,6 +39,14 @@ if (-not $Fresh -and -not $Update -and -not (Test-Path $sourceDb)) {
 
 $rootFiles = @("start.ps1", "stop.ps1", "Start-Ledger.cmd",
                "Stop-Ledger.cmd", "run_ledger.py", "README.md")
+$remoteFiles = @("setup\Set-LedgerRemoteAccess.ps1",
+                 "setup\Test-LedgerRemoteAccess.ps1",
+                 "docs\REMOTE-ACCESS.md")
+$recoveryFiles = @("setup\Restore-LedgerBackup.ps1")
+# Shipped only with the data-carrying package, because it tells the reader
+# their existing password still works - which is true only when the signing
+# key travels with the records.
+$transferNotes = "setup\READ-ME-FIRST.txt"
 # Adding a launcher at the repo root without listing it above would silently
 # ship a package missing it. Check before stopping Ledger or building.
 $unlisted = Get-ChildItem -LiteralPath $root -File |
@@ -49,7 +57,7 @@ if ($unlisted) {
            "reach the other PC: " + ($unlisted.Name -join ", ") +
            ". Add them to the `$rootFiles list or delete them.")
 }
-foreach ($required in $rootFiles) {
+foreach ($required in ($rootFiles + $remoteFiles + $recoveryFiles + $transferNotes)) {
     if (-not (Test-Path (Join-Path $root $required))) {
         throw "The package needs '$required' at the project root, but it is missing."
     }
@@ -91,6 +99,18 @@ try {
     # sources, configs and package.json there would be unusable weight - and
     # their presence makes start.ps1 try to rebuild and fail.
     Copy-Tree (Join-Path $root "web\dist") (Join-Path $payload "web\dist")
+
+    # Ship only reviewed remote-access code/docs, never local VPN or CA state.
+    foreach ($relative in $remoteFiles) {
+        $destination = Join-Path $payload $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $destination
+    }
+    foreach ($relative in $recoveryFiles) {
+        $destination = Join-Path $payload $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $destination
+    }
 
     $payloadData = Join-Path $payload "server\data"
     if (-not $Update) {
@@ -136,6 +156,9 @@ finally:
     # to run the wrong one.
     Copy-Item (Join-Path $setup "Install-Ledger.ps1"),
         (Join-Path $setup "Install-Ledger.cmd") -Destination $stage
+    if (-not $Fresh -and -not $Update) {
+        Copy-Item -LiteralPath (Join-Path $root $transferNotes) -Destination $stage
+    }
     # Last line of defence. A -Fresh or -Update package promises "no data",
     # and that promise is worth nothing if a stray key or database can ride
     # along because someone added a folder or changed an exclusion. Check the

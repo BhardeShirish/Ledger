@@ -1,6 +1,7 @@
 """Inventory: auto-ingest, dedupe, wastage, counts, order list,
 auto-recipe learning goldens."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 
 def _today():
@@ -61,6 +62,46 @@ def test_wastage_flow(client, outlet_id):
     wl = client.get("/api/inventory/wastage", params={
         "outlet_id": outlet_id, "start": _today(), "end": _today()}).json()
     assert wl[0]["reason"] == "spoiled"
+
+
+def test_wastage_and_count_start_reject_future_dates(client, outlet_id):
+    future = (date.today() + timedelta(days=1)).isoformat()
+    wastage = client.post("/api/inventory/wastage", json={
+        "outlet_id": outlet_id, "business_date": future,
+        "stock_item_id": 0, "qty": 1, "reason": "spoiled"})
+    assert wastage.status_code == 422, wastage.text
+    assert "future" in wastage.json()["detail"].lower()
+
+    count = client.post("/api/inventory/count/start", params={
+        "outlet_id": outlet_id, "business_date": future})
+    assert count.status_code == 422, count.text
+    assert "future" in count.json()["detail"].lower()
+
+    historical = client.post("/api/inventory/count/start", params={
+        "outlet_id": outlet_id,
+        "business_date": (date.today() - timedelta(days=1)).isoformat()})
+    assert historical.status_code == 201, historical.text
+
+
+def test_count_start_files_the_night_count_under_the_kolkata_day(
+        client, outlet_id, monkeypatch):
+    """A count started just after midnight in Kolkata belongs to the new day.
+
+    19:00 UTC is already 00:30 the next morning here. A UTC-based default
+    would file that night's count under yesterday and true stock up against
+    the wrong business day. The clock is frozen on a past date no real UTC
+    "today" can ever match, so a UTC regression cannot pass by luck.
+    """
+    ist_after_midnight = datetime(2021, 3, 15, 0, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert ist_after_midnight.astimezone(timezone.utc).date().isoformat() == "2021-03-14"
+    monkeypatch.setattr("app.routers.inventory.now_local", lambda: ist_after_midnight)
+    monkeypatch.setattr("app.util.now_local", lambda: ist_after_midnight)
+
+    started = client.post("/api/inventory/count/start",
+                          params={"outlet_id": outlet_id})
+    assert started.status_code == 201, started.text
+    count = client.get(f"/api/inventory/count/{started.json()['count_id']}").json()
+    assert count["business_date"] == "2021-03-15"
 
 
 def test_count_trueup_and_shrinkage(client, outlet_id):

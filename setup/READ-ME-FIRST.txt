@@ -1,0 +1,124 @@
+LEDGER - MOVING TO THIS PC
+==========================
+
+This ZIP contains the Ledger program AND a copy of the restaurant's real
+records: expenses, sales, staff, attendance and receipts. Treat it exactly
+as you would treat the ledger book itself. Do not leave it in a shared
+folder, a chat, or an email inbox once you are done.
+
+
+WHAT TO DO
+----------
+
+1. Copy this whole folder somewhere on the new PC, for example the Desktop.
+   Do not run it from inside the ZIP.
+
+2. Double-click:  Install-Ledger.cmd
+
+   It works out on its own whether this is a first installation or an
+   update to a Ledger already on the PC. Windows may warn that the file
+   came from another computer; choose "More info" then "Run anyway".
+
+3. Wait for it to finish. It installs to:
+
+       %LOCALAPPDATA%\Ledger
+
+   and starts Ledger in your browser at http://127.0.0.1:8765
+
+4. Sign in with the SAME owner password you use on the other PC. The
+   package carries the signing key, so your existing logins still work.
+   There is no new password to choose.
+
+To start Ledger later, use the "Ledger" shortcut, or Start-Ledger.cmd in
+the installed folder. To stop it, Stop-Ledger.cmd.
+
+
+WHERE YOUR DATA LIVES
+---------------------
+
+    %LOCALAPPDATA%\Ledger\server\data\ledger.db      the records
+    %LOCALAPPDATA%\Ledger\server\data\uploads\       the receipt photos
+
+Ledger also writes a full recovery copy OUTSIDE that folder, here:
+
+    Documents\Ledger Backups\ledger-recovery-YYYY-MM-DD.zip
+
+That location is the whole point: if the Ledger folder is ever deleted,
+those copies are still there. Thirty days are kept. You can point them at
+a Google Drive folder instead - Settings, then "Data safety" - so that a
+copy leaves the PC entirely.
+
+
+IF THE DATA IS EVER LOST
+------------------------
+
+From the installed Ledger folder, in PowerShell:
+
+    .\setup\Restore-LedgerBackup.ps1 -BackupPath "<path to the ZIP>" `
+        -OwnerAuthorized -ConfirmRestore
+
+It checks the archive and the database before touching anything, and puts
+your current data aside first, so a failed restore can be undone.
+
+If all that survives is wreckage - carved files, forensic archives, old
+half-copies - point the recovery importer at the whole folder:
+
+    cd "%LOCALAPPDATA%\Ledger\server"
+    python -m app.recovery_import --source-dir "<folder of fragments>" `
+        --target "%LOCALAPPDATA%\Ledger\server\data\ledger.db"
+
+That is a rehearsal: it reports what it found and saves nothing. Read the
+counts, then run it again with --apply. It reads damaged files row by row,
+matches outlets and categories by name rather than by id, and never
+overwrites a record that is already there, so it is safe to run twice.
+
+
+IF YOU FORGET THE PASSWORD
+--------------------------
+
+On the sign-in screen, click "Forgot password?".
+
+There is no email in Ledger, and that is deliberate - your books are on
+your PC, not on somebody's server. So instead of a link in an inbox,
+Ledger writes a one-time code into a file on the PC itself:
+
+    %LOCALAPPDATA%\Ledger\server\data\password-reset.txt
+
+Open that file, copy the code, type it back into the screen along with your
+new password. The code lasts 15 minutes and only works a few times, so
+guessing it is pointless - and anyone who cannot open that folder cannot
+reset your password, even if they can reach Ledger from their phone.
+
+Everyone signed in elsewhere is signed out when the password changes.
+
+Five wrong sign-in attempts lock the account for 10 minutes. The lock
+clears itself; you do not need to do anything but wait.
+
+
+IMPORTANT - TWO PCs, ONE LEDGER
+-------------------------------
+
+Both PCs now hold the same records. They start drifting apart the moment
+somebody enters something on either one, and nothing merges them back
+automatically. Decide which PC is the real one and enter data only there.
+The other is a spare.
+
+If you want the second PC to be able to see the ledger, do not install a
+second copy - give it access to the first over the network instead. See
+docs\REMOTE-ACCESS.md in the installed folder.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+
+- "Python was not found": the installer sets Python up itself. If it still
+  fails, install Python 3.11 or newer from python.org, tick "Add python.exe
+  to PATH", then run Install-Ledger.cmd again.
+- The browser shows nothing at 127.0.0.1:8765: give it a minute on first
+  start, then run Start-Ledger.cmd from the installed folder and read the
+  message it prints.
+- You are asked to choose a NEW owner password: the package did not carry
+  the signing key. Stop, and rebuild the package on the first PC with
+  setup\Create-Ledger-New-PC-Package.ps1 (no -Fresh, no -Update).
+- "Account temporarily locked. Try later.": five wrong attempts. Wait 10
+  minutes, or use "Forgot password?" as described above.

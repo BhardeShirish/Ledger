@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api/client";
-import { Card, ErrorNote, SectionLabel } from "./ui";
+import { inr } from "../lib/format";
+import { Card, ErrorNote, SectionLabel, Spinner } from "./ui";
 import { FindingList, type Finding } from "./Findings";
-
-const money = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 /**
  * Kitchen tickets that never became a bill.
@@ -36,15 +35,13 @@ export function KotGaps({ start, end, outletId }: {
         <SectionLabel>Kitchen tickets without a bill</SectionLabel>
         {t && t.days_measurable > 0 && (
           <span className="text-xs text-ink-faint">
-            {t.tickets_seen.toLocaleString("en-IN")} tickets over{" "}
-            {t.days_measurable} days
+            <span className="num">{t.tickets_seen.toLocaleString("en-IN")}</span> tickets over{" "}
+            <span className="num">{t.days_measurable}</span> days
           </span>
         )}
       </div>
 
-      {q.isLoading && (
-        <div className="py-6 text-sm text-ink-faint">Reading the books…</div>
-      )}
+      {q.isLoading && <Spinner label="Reading the books…" />}
       {q.isError && <ErrorNote msg="Couldn't read your kitchen tickets." />}
 
       {t && t.days_measurable === 0 ? (
@@ -59,9 +56,9 @@ export function KotGaps({ start, end, outletId }: {
                     note="at least" strong={t.missing_at_least > 0} />
             <Figure label="Could be as high as" value={t.missing_at_most.toLocaleString("en-IN")}
                     note="if no bill lost its number" />
-            <Figure label="Typical day" value={String(t.typical_per_day)}
+            <Figure label="Typical day" value={t.typical_per_day.toLocaleString("en-IN")}
                     note="tickets" />
-            <Figure label="Worth at least" value={money(t.value_at_least_rupees)}
+            <Figure label="Worth at least" value={inr(Math.round(t.value_at_least_rupees * 100))}
                     note="at your own average bill" />
           </div>
 
@@ -75,14 +72,14 @@ export function KotGaps({ start, end, outletId }: {
               <div className="space-y-2">
                 {worst.slice(0, open ? worst.length : 5).map((w: any) => (
                   <div key={w.date}
-                       className="rounded-lg border border-line bg-paper-2 p-3">
+                       className="rounded-lg border border-rule bg-paper-2 p-3">
                     <div className="flex items-baseline justify-between gap-3 text-sm">
                       <span className="font-medium">{w.date}</span>
-                      <span className="shrink-0 tabular-nums text-ink-soft">
+                      <span className="num shrink-0 text-ink-soft">
                         {w.missing_at_least} of {w.tickets_seen} raised
                       </span>
                     </div>
-                    <p className="mt-1 break-words font-mono text-xs text-ink-faint">
+                    <p className="num mt-1 break-words text-xs text-ink-faint">
                       {w.missing_numbers.join(", ")}
                     </p>
                   </div>
@@ -91,7 +88,7 @@ export function KotGaps({ start, end, outletId }: {
               {worst.length > 5 && (
                 <button type="button" onClick={() => setOpen(!open)}
                         className="text-xs font-medium text-accent hover:underline">
-                  {open ? "Show fewer days" : `Show all ${worst.length} days`}
+                  {open ? "Show fewer days" : <>Show all <span className="num">{worst.length}</span> days</>}
                 </button>
               )}
             </div>
@@ -108,9 +105,9 @@ function Figure({ label, value, note, strong }: {
   label: string; value: string; note: string; strong?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-paper-2 p-3">
+    <div className="rounded-lg border border-rule bg-paper-2 p-3">
       <p className="text-xs text-ink-faint">{label}</p>
-      <p className={"mt-0.5 text-lg font-semibold tabular-nums " +
+      <p className={"num mt-0.5 text-lg font-semibold " +
                     (strong ? "text-accent" : "")}>{value}</p>
       <p className="text-xs text-ink-faint">{note}</p>
     </div>

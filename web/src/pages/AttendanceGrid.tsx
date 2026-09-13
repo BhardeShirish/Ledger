@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext, Link } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
 import { useDateParam } from "../lib/useDateParam";
 import { addDaysISO, DOW_LABELS, fmtDateShort, minToHHMM, parseTimeInput, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import { Badge, Button, Card, ErrorNote, SaveBar, SectionLabel, Spinner } from "../components/ui";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
 
@@ -21,11 +22,16 @@ type Cell = {
 type Emp = { id: number; name: string; designation: string; cells: Cell[] };
 
 const CYCLE: Record<string, string> = { P: "A", A: "H", H: "L", L: "WO", WO: "P" };
+// Tones carry meaning (green present, red absent, amber half, grey leave/off),
+// so each one is darkened rather than recoloured: the tinted 10% fills and
+// paper-3 are too light for good/bad/ink-faint to clear 4.5:1 on top of them.
 const STATUS_TONE: Record<string, string> = {
-  P: "bg-good/10 text-good", A: "bg-bad/10 text-bad",
-  H: "bg-amber-100 text-amber-800", L: "bg-paper-3 text-ink-faint",
-  WO: "bg-paper-3 text-ink-faint",
+  P: "bg-good/10 text-green-800", A: "bg-bad/10 text-red-800",
+  H: "bg-amber-100 text-amber-800", L: "bg-paper-3 text-ink-soft",
+  WO: "bg-paper-3 text-ink-soft",
 };
+
+const NO_EDITS: Record<string, any> = {};
 
 export default function AttendanceGrid() {
   const { outletId } = useOutletContext<Ctx>();
@@ -177,13 +183,11 @@ export default function AttendanceGrid() {
 
   const dirtyCount = Object.keys(dirty).length;
 
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (Object.keys(dirty).length > 0) { e.preventDefault(); e.returnValue = ""; }
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  useDirtyDraft({
+    open: true, label: "attendance changes",
+    values: dirty, pristine: NO_EDITS,
+    discard: () => setDirty(NO_EDITS),
+  });
 
   // head-count for the day being edited, straight off the grid cells
   const dayCounts = useMemo(() => {
@@ -221,7 +225,7 @@ export default function AttendanceGrid() {
           <SectionLabel>Staff · Attendance</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">
             {fmtDateShort(sel)}
-            {sel === todayISO() && <span className="ml-2 align-middle text-sm font-normal text-accent">today</span>}
+            {sel === todayISO() && <span className="ml-2 align-middle text-sm font-normal text-orange-800">today</span>}
           </h1>
           <p className="mt-0.5 text-xs text-ink-faint">
             Shift 1 · {shifts[0]?.start}–{shifts[0]?.end}
@@ -235,7 +239,7 @@ export default function AttendanceGrid() {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {sel !== todayISO() && (
             <Button variant="outline" size="sm" disabled={dirtyCount > 0}
                     onClick={() => setSel(todayISO())}>Today</Button>
@@ -254,8 +258,9 @@ export default function AttendanceGrid() {
       <Card className="flex items-center gap-1 p-2">
         <Button variant="outline" size="sm" disabled={dirtyCount > 0}
                 onClick={() => setSel(addDaysISO(sel, -7))}
+                aria-label="Show previous week"
                 title="Previous week">‹</Button>
-        <div className="flex flex-1 gap-1">
+        <div className="grid flex-1 grid-cols-7 gap-1">
           {days.map((d) => {
             const future = d > todayISO();
             const active = d === sel;
@@ -264,18 +269,34 @@ export default function AttendanceGrid() {
                 onClick={() => setSel(d)}
                 title={future ? "That day has not happened yet"
                   : dirtyCount > 0 && !active ? "Save or discard your changes first" : ""}
-                className={`flex-1 rounded-md px-1 py-1.5 text-center transition ${
-                  active ? "bg-accent text-white shadow-sm"
+                className={`min-h-11 min-w-0 rounded-md px-0.5 py-1.5 text-center transition ${
+                  active ? "bg-accent text-white"
                   : future ? "cursor-not-allowed text-ink-faint/40"
                   : "hover:bg-paper-3"}`}>
-                <div className="text-[10px] font-medium uppercase tracking-wide">
-                  {DOW_LABELS[(new Date(d + "T12:00:00").getDay() + 6) % 7]}
+                <div className="text-[11px] font-medium uppercase tracking-normal sm:tracking-wide">
+                  {/* Two letters at phone width: three-letter names collided
+                      with their neighbours inside a 7-across week. */}
+                  <span className="sm:hidden">
+                    {DOW_LABELS[(new Date(d + "T12:00:00").getDay() + 6) % 7].slice(0, 2)}
+                  </span>
+                  <span className="hidden sm:inline">
+                    {DOW_LABELS[(new Date(d + "T12:00:00").getDay() + 6) % 7]}
+                  </span>
                 </div>
                 <div className="num text-sm font-semibold">{d.slice(8)}</div>
                 {d === todayISO() && (
-                  <div className={`text-[9px] font-semibold uppercase ${active ? "text-white/80" : "text-accent"}`}>
-                    today
-                  </div>
+                  <>
+                    {/* A dot, not the word: at 320px seven "today" labels
+                        pushed the week row off the card. */}
+                    <div aria-hidden="true"
+                         className={`mx-auto mt-0.5 h-1.5 w-1.5 rounded-full sm:hidden ${
+                           active ? "bg-white" : "bg-accent"}`} />
+                    <div className={`hidden text-[11px] font-semibold uppercase sm:block ${
+                      active ? "text-white" : "text-accent"}`}>
+                      today
+                    </div>
+                    <span className="sr-only">today</span>
+                  </>
                 )}
               </button>
             );
@@ -284,6 +305,7 @@ export default function AttendanceGrid() {
         <Button variant="outline" size="sm"
                 disabled={dirtyCount > 0 || addDaysISO(weekStart, 7) > todayISO()}
                 onClick={() => setSel(addDaysISO(sel, 7) > todayISO() ? todayISO() : addDaysISO(sel, 7))}
+                aria-label="Show next week"
                 title="Next week">›</Button>
       </Card>
       <ErrorNote msg={err} />
@@ -302,7 +324,7 @@ export default function AttendanceGrid() {
                     active ? "bg-accent/5 text-accent" : "text-ink-soft"}`}>
                     {DOW_LABELS[(dow + 6) % 7]}<br />
                     <span className="num text-xs font-normal text-ink-faint">{d.slice(8)}</span>
-                    {active && <div className="text-[9px] font-semibold uppercase text-accent">editing</div>}
+                    {active && <div className="text-[11px] font-semibold uppercase text-accent">editing</div>}
                   </th>
                 );
               })}
@@ -338,7 +360,7 @@ export default function AttendanceGrid() {
                         <td key={c.date}
                             className={`px-1.5 py-2 text-center ${c.off_day && !st ? "bg-paper-3/50" : ""}`}>
                           <span className={`inline-block min-w-[28px] rounded px-1 py-0.5 text-xs font-semibold ${
-                            STATUS_TONE[st ?? ""] ?? "text-ink-faint/60"}`}>
+                            STATUS_TONE[st ?? ""] ?? "text-ink-soft"}`}>
                             {st ?? (c.off_day ? "off" : "·")}
                             {["P", "A"].includes(st!) && v?.double_duty ? " ×2" : ""}
                           </span>
@@ -353,7 +375,7 @@ export default function AttendanceGrid() {
                         <div className="mx-auto w-[104px]">
                             <button onClick={() => cycle(e.id, c)}
                                     title={`Roster: ${c.shift_name}`}
-                                    className={`w-full rounded px-1 py-0.5 text-xs font-semibold ${STATUS_TONE[st ?? ""] ?? "border border-dashed border-rule-strong text-ink-faint"}`}>
+                                    className={`w-full rounded px-1 py-0.5 text-xs font-semibold ${STATUS_TONE[st ?? ""] ?? "border border-dashed border-rule-strong text-ink-soft"}`}>
                               {st ?? (c.off_day ? "off" : "+")}
                               {["P", "A"].includes(st!) ? (v?.double_duty ? " ×2" : " ×1") : ""}
                             </button>
@@ -362,7 +384,7 @@ export default function AttendanceGrid() {
                                       title="Absent for both shifts — counts as two days missed"
                                       className={`mt-1 w-full rounded px-1 py-0.5 text-[11px] font-bold ${
                                         v?.double_duty ? "bg-bad text-white"
-                                        : "border border-rule-strong text-ink-faint hover:bg-paper-3"}`}>
+                                        : "border border-rule-strong text-ink-soft hover:bg-paper-3"}`}>
                                 {v?.double_duty ? "×2 absent" : "×1 absent"}
                               </button>
                             )}
@@ -372,9 +394,9 @@ export default function AttendanceGrid() {
                                   {shifts.map((s, i) => (
                                     <button key={s.id} onClick={() => pickShift(e.id, c, s)}
                                             title={`${s.name} (${s.start}–${s.end})`}
-                                            className={`flex-1 rounded px-1 py-0.5 num text-[10px] font-bold ${
+                                            className={`flex-1 rounded px-1 py-0.5 num text-[11px] font-bold ${
                                               activeShiftId === s.id ? "bg-accent text-white"
-                                              : "border border-rule-strong text-ink-faint hover:bg-paper-3"}`}>
+                                              : "border border-rule-strong text-ink-soft hover:bg-paper-3"}`}>
                                       S{i + 1}
                                     </button>
                                   ))}
@@ -392,12 +414,12 @@ export default function AttendanceGrid() {
                                           title="Double shift — counts as an extra day"
                                           className={`rounded px-1 text-[11px] font-bold ${
                                             v?.double_duty ? "bg-accent text-white"
-                                            : "text-ink-faint hover:bg-paper-3"}`}>
+                                            : "text-ink-soft hover:bg-paper-3"}`}>
                                     {v?.double_duty ? "×2" : "×1"}
                                   </button>
                                 </div>
-                                {!!v?.late_min && <div className="text-[10px] leading-none text-bad">late</div>}
-                                {!!v?.ot_min && <div className="text-[10px] leading-none text-good">OT</div>}
+                                {!!v?.late_min && <div className="text-[11px] leading-none text-bad">late</div>}
+                                {!!v?.ot_min && <div className="text-[11px] leading-none text-good">OT</div>}
                               </>
                             )}
                           </div>
@@ -425,44 +447,69 @@ export default function AttendanceGrid() {
               const v = valueFor(e.id, cell);
               const st = v?.status;
               const activeShiftId = v?.shift_id ?? cell.row?.shift_id;
+              const worked = ["P", "H"].includes(st!);
               return (
-                <div key={e.id} className="border-b border-rule/60 px-3 py-2 last:border-0">
+                <div key={e.id} className="space-y-2.5 border-b border-rule/60 px-3 py-3 last:border-0">
                   <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm">{e.name}</span>
-                    {["P", "A"].includes(st!) && (
-                      <button onClick={() => toggleDouble(e.id, cell)}
-                              title={st === "A" ? "Absent for both shifts" : "Double shift"}
-                              aria-label={st === "A" ? "Absent for both shifts" : "Double shift"}
-                              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 num text-xs font-bold sm:min-h-0 sm:min-w-0 ${
-                                v.double_duty ? (st === "A" ? "bg-bad text-white" : "bg-accent text-white")
-                                : "border border-rule-strong text-ink-faint"}`}>
-                        ×{v.double_duty ? 2 : 1}
-                      </button>
-                    )}
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{e.name}</span>
                     <button onClick={() => cycle(e.id, cell)}
                             aria-label={`${e.name}: change attendance`}
-                            className={`inline-flex min-h-11 w-11 items-center justify-center rounded px-1 py-1 text-xs font-semibold sm:min-h-0 sm:w-9 ${STATUS_TONE[st ?? ""] ?? "border border-rule-strong text-ink-faint"}`}>
+                            className={`inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md px-2 text-sm font-semibold ${STATUS_TONE[st ?? ""] ?? "border border-rule-strong text-ink-soft"}`}>
                       {st ?? (cell.off_day ? "off" : "—")}
                     </button>
                   </div>
-                  {["P", "H"].includes(st!) && (
-                    <div className="mt-1.5 flex items-center gap-1.5 pl-1">
-                      {shifts.map((s, i) => (
-                        <button key={s.id} onClick={() => pickShift(e.id, cell, s)}
-                                className={`rounded px-2 py-1 text-[11px] font-bold ${
-                                  activeShiftId === s.id ? "bg-accent text-white"
-                                  : "border border-rule-strong text-ink-faint"}`}>
-                          S{i + 1} {s.start}
-                        </button>
-                      ))}
-                      <input aria-label={`${e.name} ${date} arrival time`}
-                             placeholder="in" value={toEntry(v).in_time}
-                             onChange={(ev) => setTime(e.id, cell, "in_time", ev.target.value)}
-                             className="w-14 rounded border border-rule-strong px-1 py-1 text-center num text-xs" />
-                      <input aria-label={`${e.name} ${date} departure time`}
-                             placeholder="out" value={toEntry(v).out_time}
-                             onChange={(ev) => setTime(e.id, cell, "out_time", ev.target.value)}
-                             className="w-14 rounded border border-rule-strong px-1 py-1 text-center num text-xs" />
+                  {worked && (
+                    <div>
+                      <div className="label-caps">Shift</div>
+                      <div className="mt-1 grid grid-cols-2 gap-2">
+                        {shifts.map((s, i) => (
+                          <button key={s.id} onClick={() => pickShift(e.id, cell, s)}
+                                  aria-pressed={activeShiftId === s.id}
+                                  className={`inline-flex min-h-11 w-full items-center justify-center rounded-md px-2 text-xs font-bold ${
+                                    activeShiftId === s.id ? "bg-accent text-white"
+                                    : "border border-rule-strong text-ink-soft"}`}>
+                            <span className="num">S{i + 1} · {s.start}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {worked && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="label-caps">In</div>
+                        <input aria-label={`${e.name} ${date} arrival time`}
+                               placeholder="in" value={toEntry(v).in_time}
+                               onChange={(ev) => setTime(e.id, cell, "in_time", ev.target.value)}
+                               className="num mt-1 min-h-11 w-full rounded-md border border-rule-strong px-2 py-2 text-center text-sm" />
+                      </div>
+                      <div>
+                        <div className="label-caps">Out</div>
+                        <input aria-label={`${e.name} ${date} departure time`}
+                               placeholder="out" value={toEntry(v).out_time}
+                               onChange={(ev) => setTime(e.id, cell, "out_time", ev.target.value)}
+                               className="num mt-1 min-h-11 w-full rounded-md border border-rule-strong px-2 py-2 text-center text-sm" />
+                      </div>
+                    </div>
+                  )}
+                  {["P", "H", "A"].includes(st!) && (
+                    <div>
+                      <div className="label-caps">
+                        {st === "A" ? "Shifts missed" : "Shifts worked"}
+                      </div>
+                      <button onClick={() => toggleDouble(e.id, cell)}
+                              aria-pressed={!!v?.double_duty}
+                              aria-label={st === "A"
+                                ? `${e.name}: absent for both shifts`
+                                : `${e.name}: double shift`}
+                              className={`mt-1 inline-flex min-h-11 w-full items-center justify-center rounded-md px-2 text-xs font-bold ${
+                                v?.double_duty ? (st === "A" ? "bg-bad text-white" : "bg-accent text-white")
+                                : "border border-rule-strong text-ink-soft"}`}>
+                        <span className="num mr-1">×{v?.double_duty ? 2 : 1}</span>
+                        {v?.double_duty
+                          ? (st === "A" ? "both shifts missed" : "double shift")
+                          : (st === "A" ? "one shift missed" : "single shift")}
+                      </button>
                     </div>
                   )}
                 </div>

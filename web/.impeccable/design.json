@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-13T05:06:43.212Z",
+  "title": "Design System: Ledger — The Counter Book",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "Ledger Paper", "canonical": "#FAF7F2", "tonalRamp": ["#1C1917", "#3A3532", "#57534E", "#70665D", "#A8A29E", "#D6CCC0", "#F3EEE6", "#FAF7F2"] },
+      "paper-2": { "role": "neutral", "displayName": "Paper, one shade down", "canonical": "#F3EEE6" },
+      "paper-3": { "role": "neutral", "displayName": "Paper, two shades down", "canonical": "#ECE5DA" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#1C1917" },
+      "ink-soft": { "role": "neutral", "displayName": "Soft Ink", "canonical": "#57534E" },
+      "ink-faint": { "role": "neutral", "displayName": "Faint Ink", "canonical": "#70665D", "note": "Shipped override of index.css supersedes tailwind.config.js's stale #A8A29E (was below 3:1 contrast on paper)." },
+      "accent": { "role": "primary", "displayName": "Burnt Turmeric", "canonical": "#C2410C", "tonalRamp": ["#431707", "#7A2A0D", "#9A3410", "#C2410C", "#E06A32", "#F4A876", "#FFD9B8", "#FFF1E7"] },
+      "accent-soft": { "role": "primary", "displayName": "Turmeric, soft tint", "canonical": "#FFF1E7" },
+      "good": { "role": "semantic-success", "displayName": "Ready / Recorded Green", "canonical": "#15803D" },
+      "bad": { "role": "semantic-danger", "displayName": "Required-Decision Red", "canonical": "#B91C1C" },
+      "warn-bg": { "role": "semantic-warning", "displayName": "Recommendation Amber (background)", "canonical": "#FFFBEB", "note": "Tailwind default amber-50; not declared in tailwind.config.js but is the load-bearing warn token throughout the shipped app." },
+      "warn-border": { "role": "semantic-warning", "displayName": "Recommendation Amber (border)", "canonical": "#FDE68A", "note": "amber-200, used on banners/panels (offline banner, BankImport suggestion/duplicate panels). The warn Badge chip instead pairs amber-100 bg / amber-800 text, and the offline banner uses an amber-300 border — same semantic warn signal, three slightly different shade pairs by context." },
+      "warn-text": { "role": "semantic-warning", "displayName": "Recommendation Amber (text)", "canonical": "#78350F", "note": "amber-900, used in banners/panels; the warn Badge chip uses amber-800 (#92400E) instead." },
+      "rule": { "role": "neutral", "displayName": "Hairline Rule", "canonical": "#E7E0D8" },
+      "rule-strong": { "role": "neutral", "displayName": "Strong Rule", "canonical": "#D6CCC0" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "The single page-title <h1> per screen." },
+      "title": { "displayName": "Title", "purpose": "Panel and section headers within a page." },
+      "label": { "displayName": "Label / Kicker", "purpose": "Uppercase breadcrumb-style eyebrow above a headline, and stat-tile captions." },
+      "body": { "displayName": "Body", "purpose": "Default paragraph and field-label copy." },
+      "small": { "displayName": "Small", "purpose": "Hints, timestamps, secondary meta." },
+      "figure": { "displayName": "Figure", "purpose": "Every monetary amount, count, and percentage — always monospace and tabular via the .num utility." }
+    },
+    "shadows": [
+      { "name": "sheet", "value": "0 12px 40px -12px rgba(28,25,23,.28)", "purpose": "The only elevation token. Used for the overlay Sheet (modal/drawer) and the Login card — the two surfaces that visually detach from the page." }
+    ],
+    "motion": [
+      { "name": "colors-transition", "value": "transition-colors (Tailwind default duration/easing)", "purpose": "Buttons, list rows, and nav items transition background/text color on hover and selection; no custom easing or duration curve is defined anywhere in the app." },
+      { "name": "reduced-motion-killswitch", "value": "@media (prefers-reduced-motion: reduce) { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }", "purpose": "Global accessibility override applied to all animation/transition in index.css." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px", "purpose": "Sheet switches from a mobile bottom sheet (items-end, rounded-t-xl) to its desktop layout — center dialog by default, or a right-pinned side panel for the `side` variant (bank-import payee review)." },
+      { "name": "md", "value": "768px", "purpose": "Sidebar navigation replaces bottom tabs; app padding relaxes; the safe-area save bar becomes static." },
+      { "name": "lg", "value": "1024px", "purpose": "Dashboard/report stat-tile and card grids (Analytics, Reports, InventoryOverview, SettingsPage) step from 2 to 4–5 columns." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Default action button — accent fill, white text, 6px radius, 44px min touch target.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Add 12 expenses</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 14px; font-family: \"IBM Plex Sans\", system-ui, sans-serif; transition: background-color 0.15s, color 0.15s; border: none; cursor: pointer; } .ds-btn-primary { background: #C2410C; color: #FFFFFF; } .ds-btn-primary:hover { background: #A8390B; } .ds-btn-primary:focus-visible { outline: 2px solid #C2410C; outline-offset: 3px; } .ds-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action — bordered, paper background. Used for Previous/Next and Cancel.",
+      "html": "<button class=\"ds-btn ds-btn-outline\">Cancel preview</button>",
+      "css": ".ds-btn-outline { background: #FAF7F2; color: #1C1917; border: 1px solid #D6CCC0; padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 14px; min-height: 44px; } .ds-btn-outline:hover { background: #ECE5DA; } .ds-btn-outline:focus-visible { outline: 2px solid #C2410C; outline-offset: 3px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Lowest-emphasis action — no fill or border at rest, paper-3 tint on hover. Used for Discard.",
+      "html": "<button class=\"ds-btn ds-btn-ghost\">Discard</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #1C1917; border: none; padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 14px; min-height: 44px; } .ds-btn-ghost:hover { background: #ECE5DA; } .ds-btn-ghost:focus-visible { outline: 2px solid #C2410C; outline-offset: 3px; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The default bordered, flat surface used for every panel in the app.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-label\">Payees</div><div class=\"ds-card-body\">3 to check</div></div>",
+      "css": ".ds-card { background: #FAF7F2; border: 1px solid #E7E0D8; border-radius: 8px; padding: 20px; } .ds-card-label { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.12em; color: #57534E; margin-bottom: 8px; } .ds-card-body { font-size: 14px; color: #1C1917; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Standard field — bordered, 6px radius, accent focus ring; numeric variant selects its full value on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Choose category…\" />",
+      "css": ".ds-input { width: 100%; background: #FAF7F2; border: 1px solid #D6CCC0; border-radius: 6px; padding: 10px 12px; font-size: 14px; color: #1C1917; outline: none; } .ds-input:focus { border-color: #C2410C; box-shadow: 0 0 0 2px rgba(194,65,12,0.3); } .ds-input::placeholder { color: #70665D; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-good",
+      "description": "Pill badge carrying one of the three Traffic-Light states (good/warn/bad) plus a neutral default.",
+      "html": "<span class=\"ds-badge ds-badge-good\">ready</span> <span class=\"ds-badge ds-badge-warn\">check duplicate</span> <span class=\"ds-badge ds-badge-bad\">needs category</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 9999px; padding: 2px 8px; font-size: 12px; font-weight: 600; } .ds-badge-good { background: rgba(21,128,61,0.1); color: #15803D; } .ds-badge-warn { background: #FEF3C7; color: #92400E; } .ds-badge-bad { background: rgba(185,28,28,0.1); color: #B91C1C; }"
+    },
+    {
+      "name": "Sheet / Modal",
+      "kind": "custom",
+      "refersTo": "sheet",
+      "description": "The app's only dialog primitive: bottom sheet on mobile, centered (or `wide`/`side`) dialog on desktop. Traps focus, locks body scroll, dismissed by close button, Escape, or backdrop. Used both as a plain add/edit form (a dozen-plus pages) and, in its `side` variant, as the queued-review pattern (BankImport).",
+      "html": "<div class=\"ds-sheet-backdrop\"><div class=\"ds-sheet\" role=\"dialog\" aria-modal=\"true\"><div class=\"ds-sheet-header\"><h2>Add expense</h2><button class=\"ds-sheet-close\" aria-label=\"Close\">✕</button></div><div class=\"ds-sheet-body\">Form content…</div></div></div>",
+      "css": ".ds-sheet-backdrop { position: fixed; inset: 0; background: rgba(28,25,23,0.4); display: flex; align-items: flex-end; justify-content: center; } .ds-sheet { background: #FAF7F2; border: 1px solid #D6CCC0; border-radius: 12px 12px 0 0; box-shadow: 0 12px 40px -12px rgba(28,25,23,.28); width: 100%; max-height: 92vh; overflow-y: auto; } .ds-sheet-header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #E7E0D8; background: #FAF7F2; padding: 14px 20px; font-weight: 600; } .ds-sheet-close:focus-visible { outline: 2px solid #C2410C; outline-offset: 3px; } .ds-sheet-body { padding: 16px 20px; }"
+    },
+    {
+      "name": "Payee Queue Row",
+      "kind": "custom",
+      "refersTo": "payee-review-sheet",
+      "description": "List-item for the bank-import review queue: label, tabular amount, a Traffic-Light badge, and an Edit/Review button that opens the payee in a side/bottom Sheet. No persistent selected-row tint — the row's own state (its Badge) is the only thing that changes once its Sheet review is resolved.",
+      "html": "<div class=\"ds-payee-row\"><span class=\"ds-payee-row-top\"><span class=\"ds-payee-row-label\">Swiggy</span><span class=\"ds-payee-row-amount\">₹4,250.00</span></span><span class=\"ds-badge ds-badge-warn\">recommended</span><button class=\"ds-btn ds-btn-outline\">Review</button></div>",
+      "css": ".ds-payee-row { display: flex; align-items: center; gap: 12px; border-radius: 6px; border: 1px solid #E7E0D8; padding: 10px 12px; font-family: \"IBM Plex Sans\", system-ui, sans-serif; } .ds-payee-row-top { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; } .ds-payee-row-label { font-size: 14px; font-weight: 500; color: #1C1917; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-payee-row-amount { font-family: \"IBM Plex Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; color: #1C1917; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Counter Book",
+    "overview": "Ledger reads like the physical ledger it replaces: warm cream paper, dense ink, and a single burnt-turmeric accent reserved for action. It is a working document, not a dashboard — dense with real figures, quiet in color, and built so an owner scanning it during a busy shift can tell in one glance what needs a decision and what has already been handled. Nothing decorative earns a place; every color, weight, and border in the shipped app is doing a job (a state, a hierarchy level, or a boundary). The system is flat and paper-like rather than lifted: surfaces are told apart by tone (paper / paper-2 / paper-3) and a hairline rule, not by shadow. Shadow is reserved for the rare moment something detaches from the page — an overlay sheet, the sign-in card. Money is always set in a tabular monospace so columns of rupees line up without being asked to.",
+    "keyCharacteristics": [
+      "Warm neutral paper background with near-black ink text; one accent color (burnt turmeric) used sparingly for actions and highlights only.",
+      "A strict three-color state vocabulary — green/amber/red — that means the same thing everywhere: ready, needs a look, needs a decision.",
+      "Flat, bordered surfaces; tonal layering instead of shadow for depth.",
+      "Figures are always monospace and tabular; prose is always humanist sans.",
+      "Reviewable workflows (like bank-statement import) keep their queue on the page and open one item at a time in an explicit Sheet — a side sheet on desktop, a bottom sheet on mobile — over the untouched queue."
+    ],
+    "rules": [
+      { "name": "The Traffic-Light Rule", "body": "Every reviewable item in a queue resolves to exactly one of three colors: green means ready or deliberately excluded, amber means the system has a recommendation or found an ambiguity that a person should confirm, red means a decision is required and nothing has been assumed. The same three colors must never be repurposed for anything else in a reviewable list.", "section": "colors" },
+      { "name": "The One Accent Rule", "body": "Burnt turmeric is the only color used to mean \"act here\" or \"this is the brand.\" It never appears as a large background fill — only text, icons, thin borders, focus rings, and the small accent-soft tint.", "section": "colors" },
+      { "name": "The Ledger Figures Rule", "body": "Any value that is a rupee amount, a count, or a percentage is set in .num (IBM Plex Mono, tabular figures). Prose is never set in mono; figures are never set in the sans face.", "section": "typography" },
+      { "name": "The Queued Sheet Review Rule", "body": "A workflow where someone reviews and corrects several ambiguous items in sequence (the bank-import payee queue) opens each item in a Sheet, not an in-page detail panel. The Sheet locks background scroll for the duration and is dismissed only by its own close button, the Escape key, or a backdrop click. Previous/Next inside the Sheet step only through payees whose review state is not yet \"ready\" — the unresolved review queue. The underlying page's sticky Add/Cancel bar is untouched by the Sheet and stays reachable the moment it closes.", "section": "layout" },
+      { "name": "The Sticky Action Bar Rule", "body": "A page whose primary action sits below content long enough to be scrolled past keeps that action pinned in a sticky bottom bar. The shared SaveBar component (AttendanceGrid, SalesSheet) appears only while there are unsaved changes, pins above env(safe-area-inset-bottom) on mobile, and collapses to a normal static bar at md:. BankImport applies the same pinned-bottom placement to its own page-specific Add/Cancel bar.", "section": "layout" },
+      { "name": "The Flat-By-Default Rule", "body": "Cards, list rows, and panels never carry a shadow. If something needs to read as \"above\" the page, it uses the Sheet shadow, not a new one.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the accent color rare — action and brand only, never a background fill.",
+      "Do set every money amount, count, and percentage in .num (IBM Plex Mono, tabular figures).",
+      "Do use the green/amber/red Traffic-Light mapping (ready/recommended-or-ambiguous/required-decision) for any reviewable queue, and only for that.",
+      "Do open a multi-item review workflow's detail one record at a time in a Sheet (side sheet on desktop, bottom sheet on mobile) over the preserved queue, with Previous/Next stepping through only the unresolved items.",
+      "Do show evidence next to any auto-suggested value (\"Recommended from N matching earlier payments\"), not just the suggestion itself.",
+      "Do make duplicate or bulk inclusion explicit per-item and reversible (checkboxes + select/deselect all), never auto-selected.",
+      "Do leave the underlying page's queue and its sticky Add/Cancel bar exactly as they were when a review Sheet opens or closes.",
+      "Do use lucide-react inline SVGs exclusively for icons, paired with a text label except where an aria-label is present.",
+      "Do keep a page's primary action in a sticky bottom bar (SaveBar or an equivalent pinned bar) whenever that action sits far enough below content to be scrolled past."
+    ],
+    "donts": [
+      "Don't add a second shadow token or use shadow for ordinary card/row separation — depth comes from paper tone and rule borders.",
+      "Don't use rounded-full on a rectangular content container; it is reserved for pills, avatars, and track/progress shapes.",
+      "Don't render a \"warn\" (amber, ambiguity/recommendation) state in the bad red — ImportWizard's Box component does this and it contradicts the Traffic-Light Rule everywhere else in the app; treat it as a defect to fix, not a second valid mapping for warn.",
+      "Don't treat Badge's accent/neutral tones as a fourth or fifth Traffic-Light state — they mean \"current/in progress\" and \"informational,\" never \"ready,\" \"needs a look,\" or \"needs a decision.\"",
+      "Don't use the browser's unstyled window.confirm() for destructive or replay-risk actions; use the shared ConfirmSheet instead."
+    ]
+  }
+}

@@ -66,13 +66,13 @@ def test_replaying_an_expense_records_it_once(client, outlet_id, category_id):
 
 
 def test_two_different_expenses_are_not_collapsed(client, outlet_id, category_id):
-    """The guard must key off the idempotency key, not the amount - a shop
-    really can buy two ₹450 gas cylinders on one day."""
+    """A confirmed legitimate repeat must not be collapsed as a replay."""
     body = {"outlet_id": outlet_id, "business_date": DAY,
             "amount_rupees": 450.0, "category_id": category_id, "mode": "cash", "description": "Gas cylinder"}
-    for key in ("9f1c7d2e-0000-4000-8000-00000000000a",
-                "9f1c7d2e-0000-4000-8000-00000000000b"):
-        r = client.post("/api/expenses", json=body,
+    for index, key in enumerate(("9f1c7d2e-0000-4000-8000-00000000000a",
+                                 "9f1c7d2e-0000-4000-8000-00000000000b")):
+        r = client.post("/api/expenses",
+                        json={**body, "confirm_possible_duplicate": index > 0},
                         headers={"X-Idempotency-Key": key})
         assert r.status_code == 201, r.text
     rows = client.get(f"/api/expenses?outlet_id={outlet_id}"

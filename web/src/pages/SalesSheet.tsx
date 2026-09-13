@@ -1,13 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useOutletContext } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ComponentProps } from "react";
+import { ArrowRight, X } from "lucide-react";
 import { ExportButton, ImportButtons } from "../components/DataButtons";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
-import { fmtDate, inr, todayISO } from "../lib/format";
+import { fmtDate, inr, moneyCfg, todayISO } from "../lib/format";
 import { useDateParam } from "../lib/useDateParam";
 import { useDraftGuard } from "../components/Layout";
-import { Badge, Button, Card, ErrorNote, Input, SaveBar, SectionLabel, Spinner } from "../components/ui";
+import {
+  Badge, Button, Card, ConfirmSheet, ErrorNote, Input, SaveBar, SectionLabel, Select, Spinner,
+} from "../components/ui";
 
 type Ctx = { outletId: number };
 type Row = {
@@ -21,6 +25,26 @@ const CHANNEL_LABEL: Record<string, string> = {
   cash: "Cash", upi: "UPI", card: "Card", wallet: "Wallet",
   aggregator: "Delivery apps", split: "Split bills", due: "Credit (due)", other: "Other",
 };
+
+/**
+ * A money field that always shows its unit.
+ *
+ * A placeholder "₹" vanishes the moment a figure is typed, so a column of
+ * bare numbers is all that is left while the amounts are actually being
+ * entered — exactly when the unit matters. The adornment sits outside the
+ * input, so the typed value, editing, and validation are untouched.
+ */
+function RupeeInput({ className, ...props }: ComponentProps<typeof Input>) {
+  return (
+    <div className={`relative ${className ?? ""}`}>
+      <span aria-hidden="true"
+            className="num pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-ink-faint">
+        {moneyCfg.symbol}
+      </span>
+      <Input {...props} className="pl-6 text-right" />
+    </div>
+  );
+}
 
 export default function SalesSheet() {
   const { outletId } = useOutletContext<Ctx>();
@@ -134,13 +158,14 @@ export default function SalesSheet() {
           <h1 className="text-2xl font-semibold tracking-tight">{fmtDate(date)}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="date" value={date} max={todayISO()}
+          <Input type="date" size="compact" value={date} max={todayISO()}
+                 aria-label="Show the sales sheet for this date"
                  onChange={(e) => {
                    const next = e.target.value;
                    if (next === date) return;
                    requestDiscard(() => { setDrafts({}); setDate(next); });
                  }}
-                 className="rounded-md border border-rule-strong bg-paper px-3 py-1.5 num text-sm" />
+                 className="!w-auto" />
           <ExportButton entity="sales_sheet"
                         params={{ outlet_id: outletId,
                                   start: `${date.slice(0, 7)}-01`,
@@ -171,13 +196,13 @@ export default function SalesSheet() {
               <div className="num text-right text-lg font-medium">{inr(r.imported.total_paise)}</div>
             ) : (
               <div className="w-32">
-                <Input
-                  inputMode="decimal" placeholder="₹"
+                <RupeeInput
+                  inputMode="decimal"
                   value={drafts[r.channel_kind] ?? (r.manual_amount_rupees != null ? String(r.manual_amount_rupees) : "")}
+                  aria-label={`Sales amount for ${CHANNEL_LABEL[r.channel_kind] ?? r.channel_kind}`}
                   onChange={(e) => setDrafts((d) => ({ ...d, [r.channel_kind]: e.target.value }))}
                   aria-invalid={Boolean(drafts[r.channel_kind] !== undefined && validationError(r.channel_kind))}
-                  onKeyDown={(e) => e.key === "Enter" && saveKind(r.channel_kind)}
-                  className="text-right" />
+                  onKeyDown={(e) => e.key === "Enter" && saveKind(r.channel_kind)} />
                 {drafts[r.channel_kind] !== undefined && validationError(r.channel_kind) && (
                   <p className="mt-1 text-xs text-bad">{validationError(r.channel_kind)}</p>
                 )}
@@ -225,7 +250,9 @@ export default function SalesSheet() {
 
       <p className="px-1 text-xs leading-relaxed text-ink-faint">
         Petpooja numbers win when both exist. Import the day's report from{" "}
-        <Link className="underline" to="/sales/import">Sales → Import</Link> or type totals here.
+        <Link className="inline-flex items-center gap-1 underline" to="/sales/import">
+          Sales <ArrowRight size={14} aria-hidden="true" /> Import
+        </Link>{" "}or type totals here.
         Today's rows stay editable; older ones need the owner password.
       </p>
 
@@ -260,6 +287,7 @@ function LossesCard({ outletId, date, rows, kinds, onChange }: {
   const [note, setNote] = useState("");
   const [fromDrawer, setFromDrawer] = useState(true);
   const [err, setErr] = useState("");
+  const [removing, setRemoving] = useState<LossRow | null>(null);
 
   const spec = kinds.find((k) => k.kind === kind);
   const canBeCash = spec?.cash_capable ?? false;
@@ -275,7 +303,11 @@ function LossesCard({ outletId, date, rows, kinds, onChange }: {
   });
   const remove = useMutation({
     mutationFn: (id: number) => guarded(() => api.del(`/losses/${id}`)),
-    onSuccess: () => { setErr(""); onChange(); },
+    onSuccess: () => {
+      setRemoving(null);
+      setErr("");
+      onChange();
+    },
     onError: (e: any) => setErr(e.message),
   });
 
@@ -302,12 +334,10 @@ function LossesCard({ outletId, date, rows, kinds, onChange }: {
               </div>
               <div className="num font-medium">{inr(Math.round(r.amount_rupees * 100))}</div>
               <button aria-label={`Remove ${r.label}`}
-                      onClick={() => confirm(
-                        `Remove ${r.label} of ${inr(Math.round(r.amount_rupees * 100))}?`,
-                      ) && remove.mutate(r.id)}
+                      onClick={() => setRemoving(r)}
                       disabled={remove.isPending}
                       className="rounded px-1.5 text-ink-faint hover:text-bad disabled:opacity-40">
-                ✕
+                <X size={14} aria-hidden="true" />
               </button>
             </div>
           ))}
@@ -316,19 +346,22 @@ function LossesCard({ outletId, date, rows, kinds, onChange }: {
 
       <div className="border-t border-rule bg-paper-3/30 px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
-          <select value={kind}
+          <Select size="compact" value={kind}
+                  aria-label="Loss or refund type"
                   onChange={(e) => {
                     setKind(e.target.value);
                     const next = kinds.find((k) => k.kind === e.target.value);
                     setFromDrawer(next?.cash_capable ?? false);
                   }}
-                  className="rounded-md border border-rule-strong bg-paper px-2 py-1.5 text-sm">
+                  className="!w-auto">
             {kinds.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
-          </select>
-          <Input inputMode="decimal" placeholder="₹" value={amount}
-                 onChange={(e) => setAmount(e.target.value)}
-                 className="w-24 text-right" />
+          </Select>
+          <RupeeInput inputMode="decimal" value={amount}
+                      aria-label="Loss or refund amount"
+                      onChange={(e) => setAmount(e.target.value)}
+                      className="w-24" />
           <Input placeholder="Note (optional)" value={note}
+                 aria-label="Loss or refund note"
                  onChange={(e) => setNote(e.target.value)}
                  className="min-w-0 flex-1" />
           <Button size="sm" disabled={!(Number(amount) > 0) || add.isPending}
@@ -351,6 +384,20 @@ function LossesCard({ outletId, date, rows, kinds, onChange }: {
         )}
         <ErrorNote msg={err} />
       </div>
+      <ConfirmSheet
+        open={removing != null}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => {
+          if (removing) remove.mutate(removing.id);
+        }}
+        title="Remove loss?"
+        description={removing
+          ? `Remove ${removing.label} of ${inr(Math.round(removing.amount_rupees * 100))}?`
+          : ""}
+        confirmLabel="Remove loss"
+        pending={remove.isPending}
+        pendingLabel="Removing…"
+      />
     </Card>
   );
 }

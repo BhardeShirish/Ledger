@@ -1,10 +1,13 @@
 
+import math
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..audit import audit, check_edit_window
 from ..db import get_db
+from ..expense_duplicates import candidates
 from ..periods import assert_month_open
 from ..models import Expense, PurchaseReceipt, PurchaseReceiptLine, User, utcnow
 from ..security import current_user
@@ -48,6 +51,7 @@ class ExpenseIn(BaseModel):
     item_name: str = ""          # unit economics (raw materials)
     quantity: float | None = None
     unit: str = ""
+    confirm_possible_duplicate: bool = False
 
 
 def _serialize(e: Expense) -> dict:
@@ -85,6 +89,18 @@ class BulkExpenseIn(BaseModel):
     note: str = ""
     bill_total_rupees: float | None = None      # from the bill; remainder booked as adjustment
     lines: list[LineIn]
+    confirm_possible_duplicate: bool = False
+
+
+def _assert_duplicate_confirmed(db: Session, outlet_id: int, business_date: str,
+                                amount_paise: int, confirmed: bool) -> None:
+    possible = candidates(db, outlet_id, business_date, amount_paise)
+    if possible and not confirmed:
+        raise HTTPException(409, {
+            "code": "possible_duplicate",
+            "message": "An expense with this date and amount already exists. Review it before adding another.",
+            "candidates": possible,
+        })
 
 
 @router.post("/bulk", status_code=201)
@@ -98,12 +114,33 @@ def create_bulk_expenses(body: BulkExpenseIn, user: User = Depends(current_user)
                    if ln.item_name.strip() and float(ln.amount_rupees or 0) > 0]
     if not clean_lines:
         raise HTTPException(422, "At least one item line with an amount is needed")
+    line_amounts = [(line, paise(line.amount_rupees)) for line in clean_lines]
+    if any(amount_paise <= 0 for _, amount_paise in line_amounts):
+        raise HTTPException(422, "Item line amounts must round to at least one paise")
     if any((ln.quantity or 0) > 0 for ln in clean_lines) and not body.vendor_id:
         raise HTTPException(422,
             "Quantity given without a vendor — pick who the bill is from so "
             "unit prices can be compared later.")
     if body.mode not in MODES:
         raise HTTPException(422, "Bad payment mode")
+    for line in clean_lines:
+        _assert_duplicate_confirmed(
+            db, body.outlet_id, body.business_date, paise(line.amount_rupees),
+            body.confirm_possible_duplicate,
+        )
+
+    lines_paise = sum(amount_paise for _, amount_paise in line_amounts)
+    bill_paise = None
+    if body.bill_total_rupees is not None:
+        if (not math.isfinite(body.bill_total_rupees)
+                or body.bill_total_rupees < 0):
+            raise HTTPException(422, "Entered bill total must be finite and non-negative")
+        bill_paise = paise(body.bill_total_rupees)
+        if lines_paise > bill_paise:
+            raise HTTPException(
+                422,
+                "Item line total cannot exceed the entered bill total.",
+            )
 
     created_ids = []
     base_desc = body.note.strip()
@@ -126,33 +163,26 @@ def create_bulk_expenses(body: BulkExpenseIn, user: User = Depends(current_user)
                                      paise(rupees), user.id, e.id)
         sync_credit_entry_for_expense(db, e, user.id)
 
-    lines_paise = 0
-    for ln in clean_lines:
-        amt = round(float(ln.amount_rupees), 2)
-        lines_paise += paise(amt)
+    for ln, amount_paise in line_amounts:
+        amt = amount_paise / 100.0
         desc = f"{ln.item_name.strip()} · {base_desc}" if base_desc \
             else f"{ln.item_name.strip()} — from bill"
         add_line(ln.item_name, ln.quantity, ln.unit, amt, desc)
 
     # reconcile against the printed bill total: positive diff becomes its own line
-    mismatch_paise = 0
-    if body.bill_total_rupees is not None:
-        bill_paise = paise(body.bill_total_rupees)
+    if bill_paise is not None:
         diff = bill_paise - lines_paise
         if diff > 0:
             add_line("Other charges / rounding", None, "",
                      diff / 100.0,
                      f"Other charges / rounding · balance of bill {base_desc}".strip())
-        elif diff < 0:
-            mismatch_paise = diff
 
     audit(db, None, user.id, "create-bulk", "expense",
           f"{len(created_ids)} lines @ {body.business_date}",
           after={"lines": len(clean_lines),
                  "bill_total_rupees": body.bill_total_rupees})
     db.commit()
-    return {"created": len(created_ids),
-            "mismatch_rupees": round(mismatch_paise / 100, 2)}
+    return {"created": len(created_ids)}
 
 
 @router.get("")
@@ -205,6 +235,10 @@ def create_expense(body: ExpenseIn, user: User = Depends(current_user),
         raise HTTPException(422,
             "Quantity given without a vendor — pick who you bought it from so "
             "unit prices can be compared later.")
+    _assert_duplicate_confirmed(
+        db, body.outlet_id, body.business_date, int(round(body.amount_rupees * 100)),
+        body.confirm_possible_duplicate,
+    )
     e = Expense(outlet_id=body.outlet_id, business_date=body.business_date,
                 category_id=body.category_id, vendor_id=body.vendor_id,
                 amount_paise=int(round(body.amount_rupees * 100)), mode=body.mode,

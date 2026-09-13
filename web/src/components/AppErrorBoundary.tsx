@@ -1,4 +1,5 @@
 import React from "react";
+import { Button } from "./ui";
 
 const RELOAD_KEY = "ledger:chunk-reloaded-at";
 // Long enough that a genuinely broken chunk cannot spin, short enough that a
@@ -67,14 +68,12 @@ export default class AppErrorBoundary extends React.Component<Props, State> {
             : "This page could not be displayed. Your saved data is not affected."}
         </p>
         <div className="mt-5 flex justify-center gap-2">
-          <button onClick={() => this.retry()}
-                  className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">
+          <Button onClick={() => this.retry()}>
             Reload
-          </button>
-          <button onClick={() => this.retry("/")}
-                  className="rounded-md border border-rule-strong px-3 py-1.5 text-sm">
+          </Button>
+          <Button variant="outline" onClick={() => this.retry("/")}>
             Go home
-          </button>
+          </Button>
         </div>
       </main>
     );

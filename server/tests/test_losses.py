@@ -1,4 +1,6 @@
 """Day losses: drawer math, the cash-short control, and validation."""
+from app.db import SessionLocal
+from app.models import Expense, ExpenseCategory
 from app.util import today_iso
 
 
@@ -6,6 +8,25 @@ def _expected(client, outlet_id, date):
     r = client.get(f"/api/cash/day?outlet_id={outlet_id}&date={date}")
     assert r.status_code == 200, r.text
     return r.json()
+
+
+def _record_complete_month_costs(client, outlet_id, business_date):
+    """Give loss/profit tests a report whose profit is allowed to exist."""
+    client.put("/api/sales/manual", json={
+        "outlet_id": outlet_id, "business_date": business_date,
+        "channel_kind": "cash", "amount_rupees": 1000,
+    })
+    with SessionLocal() as db:
+        categories = {
+            category.name: category.id for category in db.query(ExpenseCategory).all()
+        }
+        for name, amount in (("Groceries", 30000), ("Rent", 10000), ("Electricity", 10000)):
+            db.add(Expense(
+                outlet_id=outlet_id, business_date=business_date,
+                category_id=categories[name], amount_paise=amount, mode="bank",
+                idempotency_key=f"loss-profit-base:{name}:{business_date}",
+            ))
+        db.commit()
 
 
 def test_cash_refund_reduces_expected_drawer(client, outlet_id):
@@ -150,6 +171,7 @@ def test_losses_reduce_the_monthly_profit_estimate(client, outlet_id):
     """A refund or a smashed crate left the business; profit must show it."""
     d = today_iso()
     url = f"/api/stats/dashboard?month={d[:7]}&outlet_id={outlet_id}"
+    _record_complete_month_costs(client, outlet_id, d)
 
     before = client.get(url)
     assert before.status_code == 200, before.text
@@ -170,6 +192,7 @@ def test_losses_reduce_the_monthly_profit_estimate(client, outlet_id):
 def test_deleting_a_loss_restores_the_profit_estimate(client, outlet_id):
     d = today_iso()
     url = f"/api/stats/dashboard?month={d[:7]}&outlet_id={outlet_id}"
+    _record_complete_month_costs(client, outlet_id, d)
     base = client.get(url).json()["profit_rupees"]
 
     loss_id = client.post("/api/losses", json={

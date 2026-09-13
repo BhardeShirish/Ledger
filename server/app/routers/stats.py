@@ -5,19 +5,30 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..financial_completeness import effective_bands, financial_completeness
 from ..owner_controls import owner_policy
 from ..operating_evidence import staffing_plan as build_staffing_plan
 from ..models import (Attendance, DayClosure, Employee, Expense, PayrollRun,
-                      Payslip, SalesBill, SalesDaily, User)
+                      Payslip, SalesBill, SalesDaily, ExpenseCategory, User)
+from ..costgroups import GROUPS
 from ..security import current_user
 from ..util import analytics_date_range
 from .helpers import assert_outlet_access, user_outlet_ids
 from .losses import losses_paise
+from .recurring import post_due
 from ..attendance_lib import worked_minutes
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 CHANNEL_KINDS = ["cash", "upi", "card", "wallet", "aggregator", "split", "due", "other"]
+COST_METRICS = [
+    ("food_cost", "Food cost", "cogs_food"),
+    ("beverage_cost", "Beverage cost", "cogs_bev"),
+    ("labour_cost", "Labour", "labour"),
+    ("occupancy_cost", "Rent & occupancy", "occupancy"),
+    ("operating_cost", "Running costs", "operating"),
+    ("other_cost", "Other costs", "admin"),
+]
 
 
 def _sales_by_day(db: Session, outlet_ids: list[int], lo: date, hi: date) -> dict[str, int]:
@@ -91,12 +102,17 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
                .filter(Expense.outlet_id.in_(outlets),
                        Expense.business_date >= start,
                        Expense.business_date <= end).all())
+    categories = {
+        row.id: row for row in db.query(ExpenseCategory).all()
+    }
 
     sales_by_day_channel: dict[tuple[str, str], int] = {}
     sales_by_day: dict[str, int] = {}
     net_sales_by_day: dict[str, int] = {}
     expenses_by_day: dict[str, int] = {}
     cash_expenses_by_day: dict[str, int] = {}
+    cost_by_day_group: dict[tuple[str, str], int] = {}
+    cost_by_day_category: dict[tuple[str, int], int] = {}
     tips_m: dict[str, int] = {}
     disc_m: dict[str, int] = {}
     tax_m: dict[str, int] = {}
@@ -121,11 +137,19 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
             disc_m[r.business_date] = disc_m.get(r.business_date, 0) + (r.discount_paise or 0)
             tax_m[r.business_date] = tax_m.get(r.business_date, 0) + (r.tax_paise or 0)
             bills_m[r.business_date] = bills_m.get(r.business_date, 0) + r.bills
-        elif amount > 0:
+        elif r.source == "manual" and amount > 0:
             bills_m[r.business_date] = bills_m.get(r.business_date, 0) + 1
     for expense in erows:
         expenses_by_day[expense.business_date] = (
             expenses_by_day.get(expense.business_date, 0) + expense.amount_paise)
+        category = categories.get(expense.category_id)
+        group = category.cost_group if category and category.cost_group in GROUPS else "operating"
+        cost_by_day_group[(expense.business_date, group)] = (
+            cost_by_day_group.get((expense.business_date, group), 0)
+            + expense.amount_paise)
+        cost_by_day_category[(expense.business_date, expense.category_id)] = (
+            cost_by_day_category.get((expense.business_date, expense.category_id), 0)
+            + expense.amount_paise)
         if expense.mode == "cash":
             cash_expenses_by_day[expense.business_date] = (
                 cash_expenses_by_day.get(expense.business_date, 0) + expense.amount_paise)
@@ -153,16 +177,33 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
     reg("sales_net", lambda day: net_sales_by_day.get(day, 0))
     reg("expenses", lambda day: expenses_by_day.get(day, 0))
     reg("expense_cash", lambda day: cash_expenses_by_day.get(day, 0))
+    for key, _, group in COST_METRICS:
+        reg(key, lambda day, _group=group: cost_by_day_group.get((day, _group), 0))
+    used_category_ids = sorted({
+        expense.category_id for expense in erows if expense.category_id in categories
+    })
+    expense_metrics = []
+    for category_id in used_category_ids:
+        category = categories[category_id]
+        key = f"expense_category_{category_id}"
+        reg(key, lambda day, _id=category_id: cost_by_day_category.get((day, _id), 0))
+        expense_metrics.append({
+            "key": key,
+            "label": category.name,
+            "cost_group": category.cost_group if category.cost_group in GROUPS else "operating",
+        })
     reg("tips", lambda day: tips_m.get(day, 0))
     reg("discounts", lambda day: disc_m.get(day, 0))
     reg("tax", lambda day: tax_m.get(day, 0))
     series["bills"] = [bills_m.get(day, 0) for day in days]
     totals["bills"] = sum(series["bills"])
     series["avg_ticket"] = [
-        round(sales_by_day.get(day, 0) / max(1, bills_m.get(day, 0)) / 100, 2)
+        round(sales_by_day.get(day, 0) / bills_m[day] / 100, 2)
+        if bills_m.get(day, 0) else 0.0
         for day in days]
     totals["avg_ticket"] = round(
-        sum(sales_by_day.values()) / max(1, sum(bills_m.values())) / 100, 2)
+        sum(sales_by_day.values()) / sum(bills_m.values()) / 100, 2
+    ) if sum(bills_m.values()) else 0.0
 
     # weekday averages of total sales (Mon..Sun index 0..6)
     dow_sum: dict[int, float] = {}
@@ -183,6 +224,12 @@ def analytics(start: str, end: str, outlet_id: int | None = None,
         "weekday_avg_sales": weekday_avg,
         "kinds_present": kinds_present,
         "days_recorded": sum(1 for v in series["sales_total"] if v > 0),
+        "bill_metrics_available": totals["bills"] > 0,
+        "cost_metrics": [
+            {"key": key, "label": label, "cost_group": group}
+            for key, label, group in COST_METRICS
+        ],
+        "expense_metrics": expense_metrics,
     }
 
 
@@ -275,6 +322,10 @@ def dashboard(outlet_id: int | None = None, month: str | None = None,
         assert_outlet_access(db, user, outlet_id)
         outlets = [outlet_id]
 
+    # Keep dashboard completeness aligned with the P&L even when this is
+    # the first financial screen opened after a standing cost became due.
+    post_due(db)
+
     def sale_series(source):
         rows = (db.query(SalesDaily)
                   .filter(SalesDaily.outlet_id.in_(outlets),
@@ -324,12 +375,18 @@ def dashboard(outlet_id: int | None = None, month: str | None = None,
                   .with_entities(Expense.category_id, Expense.amount_paise,
                                  Expense.business_date).all())
     by_cat: dict[int, int] = {}
+    groups = {group: {"paise": 0, "entries": 0} for group in GROUPS}
+    categories = {category.id: category for category in db.query(ExpenseCategory).all()}
     exp_by_day: dict[str, int] = {}
     total_expense = 0
     for cid, amt, bd in exp_rows:
         by_cat[cid] = by_cat.get(cid, 0) + amt
         exp_by_day[bd] = exp_by_day.get(bd, 0) + amt
         total_expense += amt
+        category = categories.get(cid)
+        group = category.cost_group if category and category.cost_group in GROUPS else "operating"
+        groups[group]["paise"] += amt
+        groups[group]["entries"] += 1
 
     payroll_gross = paid_out = 0
     runs = (db.query(PayrollRun)
@@ -362,23 +419,31 @@ def dashboard(outlet_id: int | None = None, month: str | None = None,
     modes = [{"kind": k, "net_rupees": round(v["net"] / 100, 2)}
              for k, v in sorted(by_kind.items(), key=lambda kv: -kv[1]["net"])]
 
-    from ..models import ExpenseCategory
-    cat_names = {c.id: c.name for c in db.query(ExpenseCategory).all()}
+    cat_names = {c.id: c.name for c in categories.values()}
     expense_donut = [{"name": cat_names.get(cid, f"#{cid}"),
                       "rupees": round(amt / 100, 2)}
                      for cid, amt in sorted(by_cat.items(), key=lambda kv: -kv[1])][:12]
 
     is_owner = user.role == "owner"
     month_losses = losses_paise(db, outlets, lo.isoformat(), hi.isoformat())
+    financial = financial_completeness(
+        groups,
+        net_sales_paise=sum(value["net"] for value in by_day.values()),
+        bands=effective_bands(db),
+    )
     return {
         "month": f"{y:04d}-{m:02d}",
         "sales_total_rupees": round(sum(v["total"] for v in by_day.values()) / 100, 2),
         "sales_net_rupees": round(sum(v["net"] for v in by_day.values()) / 100, 2),
         "expense_total_rupees": round(total_expense / 100, 2),
         "loss_total_rupees": round(month_losses / 100, 2),
-        "profit_rupees": round((sum(v["total"] for v in by_day.values())
+        "profit_known": financial["profit_known"],
+        "profit_unknown_reason": financial["profit_unknown_reason"],
+        "missing_cost_groups": financial["missing_cost_groups"],
+        "profit_rupees": round((sum(v["net"] for v in by_day.values())
                                 - total_expense - payroll_gross
-                                - month_losses) / 100, 2) if is_owner else None,
+                                - month_losses) / 100, 2)
+        if is_owner and financial["profit_known"] else None,
         "payroll_accrual_rupees": round(payroll_gross / 100, 2) if is_owner else None,
         "labor_cost_percent": (round(payroll_gross * 100.0 /
                                      max(1, sum(v["total"] for v in by_day.values())), 1)

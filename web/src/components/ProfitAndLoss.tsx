@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { api } from "../api/client";
-import { Card, ErrorNote, SectionLabel } from "./ui";
+import { useAuth } from "../lib/auth";
+import { inr } from "../lib/format";
+import { Card, ErrorNote, SectionLabel, Spinner } from "./ui";
 import { FindingList, type Finding } from "./Findings";
-
-const money = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 /** Colour by how a ratio sits against its healthy band.
  *
@@ -60,8 +61,8 @@ function Row({ line }: { line: any }) {
           <div className="text-xs text-ink-faint">{line.note}</div>
         )}
       </td>
-      <td className="py-2 px-2 text-right tabular-nums">{money(line.rupees)}</td>
-      <td className={`py-2 px-2 text-right tabular-nums font-semibold ${TONE[line.status]}`}>
+      <td className="num py-2 px-2 text-right">{inr(Math.round(line.rupees * 100))}</td>
+      <td className={`num py-2 px-2 text-right font-semibold ${TONE[line.status]}`}>
         {pct == null ? "—" : `${pct}%`}
       </td>
       <td className="hidden py-2 px-2 sm:table-cell sm:w-32">
@@ -70,7 +71,7 @@ function Row({ line }: { line: any }) {
       </td>
       <td className="py-2 pl-2 text-right text-xs text-ink-soft whitespace-nowrap">
         <span className={TONE[line.status]}>{WORD[line.status] ?? line.status}</span>
-        <span className="text-ink-faint"> · {line.band_low}–{line.band_high}%</span>
+        <span className="hidden text-ink-faint sm:inline"> · {line.band_low}–{line.band_high}%</span>
       </td>
     </tr>
   );
@@ -87,14 +88,14 @@ function Unknown({ why }: { why: string }) {
 }
 
 function Stat({ label, value, hint }: {
-  label: string; value: string; hint?: string;
+  label: string; value: string; hint?: ReactNode;
 }) {
   return (
     <div className="rounded-md border border-rule bg-paper-2 p-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
         {label}
       </p>
-      <p className="mt-0.5 text-lg font-semibold tabular-nums">{value}</p>
+      <p className="num mt-0.5 text-lg font-semibold">{value}</p>
       {hint && <p className="mt-0.5 text-xs text-ink-faint">{hint}</p>}
     </div>
   );
@@ -111,6 +112,7 @@ function Stat({ label, value, hint }: {
 export function ProfitAndLoss({ month, outletId }: {
   month: string; outletId: number | null;
 }) {
+  const isOwner = useAuth()?.me?.role === "owner";
   const q = useQuery({
     queryKey: ["pnl", month, outletId],
     queryFn: () => api.get(
@@ -133,17 +135,23 @@ export function ProfitAndLoss({ month, outletId }: {
     <Card className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SectionLabel>Where the money went</SectionLabel>
-        {d && (
-          <span className="text-xs text-ink-faint">
-            {money(d.sales.net_rupees)} net sales · {d.measured_on}
-            {d.period.partial && ` · ${d.period.days_counted} of ${d.period.days_in_month} days`}
-          </span>
-        )}
+        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-ink-faint">
+          {isOwner && (
+            <a href="/settings" className="font-medium text-accent hover:underline">
+              Review P&amp;L category mapping
+            </a>
+          )}
+          {d && (
+            <span>
+              <span className="num">{inr(Math.round(d.sales.net_rupees * 100))}</span> net sales · {d.measured_on}
+              {d.period.partial && <> · <span className="num">{d.period.days_counted}</span> of{" "}
+                <span className="num">{d.period.days_in_month}</span> days</>}
+            </span>
+          )}
+        </div>
       </div>
 
-      {q.isLoading && (
-        <div className="py-6 text-sm text-ink-faint">Reading the books…</div>
-      )}
+      {q.isLoading && <Spinner label="Reading the books…" />}
       {q.isError && <ErrorNote msg="Couldn't work out this month's costs." />}
 
       {d && !hasSales ? (
@@ -155,7 +163,7 @@ export function ProfitAndLoss({ month, outletId }: {
           <FindingList findings={findings} />
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[26rem] text-sm">
+            <table className="w-full min-w-full sm:min-w-[26rem] text-sm">
               <thead className="text-xs text-ink-faint">
                 <tr className="border-b border-rule text-left">
                   <th className="py-1 pr-2 font-medium">Cost</th>
@@ -176,10 +184,10 @@ export function ProfitAndLoss({ month, outletId }: {
                       Food and labour — the two you can change this week.
                     </div>
                   </td>
-                  <td className="py-2 px-2 text-right tabular-nums font-semibold">
-                    {money(d.prime_cost.rupees)}
+                  <td className="num py-2 px-2 text-right font-semibold">
+                    {inr(Math.round(d.prime_cost.rupees * 100))}
                   </td>
-                  <td className={`py-2 px-2 text-right tabular-nums font-semibold ${
+                  <td className={`num py-2 px-2 text-right font-semibold ${
                         TONE[d.prime_cost.status]}`}>
                     {d.prime_cost.percent_of_net == null
                       ? "—" : `${d.prime_cost.percent_of_net}%`}
@@ -194,8 +202,8 @@ export function ProfitAndLoss({ month, outletId }: {
                     <span className={TONE[d.prime_cost.status]}>
                       {WORD[d.prime_cost.status] ?? d.prime_cost.status}
                     </span>
-                    <span className="text-ink-faint">
-                      {" "}· under {d.prime_cost.band_high}%
+                    <span className="hidden text-ink-faint sm:inline">
+                      {" "}· under <span className="num">{d.prime_cost.band_high}%</span>
                     </span>
                   </td>
                 </tr>
@@ -206,13 +214,13 @@ export function ProfitAndLoss({ month, outletId }: {
           <div className="grid gap-3 sm:grid-cols-3">
             {d.totals.profit_known ? (
               <>
-                <Stat label="Left over" value={money(d.totals.profit_rupees)}
-                      hint={`${d.totals.profit_percent_of_net}% of net sales`} />
+                <Stat label="Left over" value={inr(Math.round(d.totals.profit_rupees * 100))}
+                      hint={<><span className="num">{d.totals.profit_percent_of_net}%</span> of net sales</>} />
                 {perBillKnown ? (
                   <>
                     <Stat label="Per bill"
-                          value={money(d.per_bill.profit_rupees)}
-                          hint={`from a ${money(d.per_bill.net_rupees)} average bill`} />
+                          value={inr(Math.round(d.per_bill.profit_rupees * 100))}
+                          hint={<>from a <span className="num">{inr(Math.round(d.per_bill.net_rupees * 100))}</span> average bill</>} />
                     <Stat label="Break even"
                           value={d.breakeven.possible
                             ? `${d.breakeven.bills_per_day} bills/day` : "—"}
@@ -243,8 +251,8 @@ export function ProfitAndLoss({ month, outletId }: {
                   <li key={s.lever} className="text-sm">
                     <div className="flex justify-between gap-2">
                       <span>{s.lever}</span>
-                      <span className="shrink-0 tabular-nums font-semibold text-good">
-                        {money(s.monthly_rupees)}
+                      <span className="num shrink-0 font-semibold text-good">
+                        {inr(Math.round(s.monthly_rupees * 100))}
                       </span>
                     </div>
                     <p className="text-xs text-ink-faint">{s.how}</p>
@@ -255,16 +263,16 @@ export function ProfitAndLoss({ month, outletId }: {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
-                Food cost, last {d.rolling_food_cost.days} days
+                Food cost, last <span className="num">{d.rolling_food_cost.days}</span> days
               </p>
               <p className="mt-1 text-sm">
-                <span className="text-lg font-semibold tabular-nums">
+                <span className="num text-lg font-semibold">
                   {d.rolling_food_cost.percent_of_net == null
                     ? "—" : `${d.rolling_food_cost.percent_of_net}%`}
                 </span>
                 <span className="text-ink-faint">
-                  {" "}({money(d.rolling_food_cost.cogs_rupees)} of{" "}
-                  {money(d.rolling_food_cost.net_rupees)})
+                  {" "}(<span className="num">{inr(Math.round(d.rolling_food_cost.cogs_rupees * 100))}</span> of{" "}
+                  <span className="num">{inr(Math.round(d.rolling_food_cost.net_rupees * 100))}</span>)
                 </span>
               </p>
               <p className="mt-1 text-xs text-ink-faint">
@@ -272,8 +280,8 @@ export function ProfitAndLoss({ month, outletId }: {
                 spikes that month and hollows out the next.
               </p>
               <p className="mt-2 text-xs text-ink-faint">
-                Wages come from your staff list: {d.payroll.headcount} people,{" "}
-                {money(d.payroll.monthly_rupees)} a month
+                Wages come from your staff list: <span className="num">{d.payroll.headcount}</span> people,{" "}
+                <span className="num">{inr(Math.round(d.payroll.monthly_rupees * 100))}</span> a month
                 {d.payroll.prorated && ", counted pro rata for the days so far"}.
               </p>
             </div>
@@ -288,9 +296,9 @@ export function ProfitAndLoss({ month, outletId }: {
                 {d.budgets.map((b: any) => (
                   <li key={b.category} className="flex justify-between gap-2">
                     <span className="truncate text-ink-soft">{b.category}</span>
-                    <span className={`shrink-0 tabular-nums ${
+                    <span className={`num shrink-0 ${
                           b.over ? "text-bad" : "text-ink"}`}>
-                      {money(b.spent_rupees)} of {money(b.budget_rupees)}
+                      {inr(Math.round(b.spent_rupees * 100))} of {inr(Math.round(b.budget_rupees * 100))}
                     </span>
                   </li>
                 ))}

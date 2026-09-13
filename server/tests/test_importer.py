@@ -94,6 +94,29 @@ def test_itemwise_import_stages_before_commit(client, outlet_id):
     db.close()
 
 
+def test_discarding_a_validated_import_removes_its_staging_and_blocks_commit(client, outlet_id):
+    staged = client.post(
+        "/api/imports/upload",
+        params={"outlet_id": outlet_id},
+        files={"file": (
+            "discard-me.xlsx",
+            build_xlsx([bill_row(8999, "2026-08-01 13:00:00", "UPI")]),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )},
+    )
+    assert staged.status_code == 200, staged.text
+    batch_id = staged.json()["batch_id"]
+
+    discarded = client.delete(f"/api/imports/{batch_id}")
+    assert discarded.status_code == 200, discarded.text
+    assert discarded.json() == {"ok": True}
+    assert client.post("/api/auth/stepup", json={"password": "change-me-please"}).status_code == 200
+    assert client.post(f"/api/imports/{batch_id}/commit").status_code == 409
+
+    batches = client.get("/api/imports", params={"outlet_id": outlet_id}).json()
+    assert next(batch for batch in batches if batch["id"] == batch_id)["status"] == "discarded"
+
+
 def test_parse_and_commit_roundtrip(client, outlet_id):
     client.post("/api/auth/stepup", json={"password": "change-me-please"})
     xlsx = build_xlsx([

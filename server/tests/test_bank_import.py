@@ -45,6 +45,12 @@ def statement_csv(rows=None) -> bytes:
     return (PREAMBLE + HEADER + "\n" + body + FOOTER).encode("utf-8")
 
 
+def phonepe_statement(rows) -> bytes:
+    header = ("Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,"
+              "Credit/debit instrument,Amount")
+    return (header + "\n" + "\n".join(rows)).encode("utf-8")
+
+
 # --- parser -----------------------------------------------------------------
 
 def test_preamble_and_footer_are_ignored():
@@ -127,6 +133,31 @@ def test_single_amount_column_uses_the_dr_cr_marker():
     parsed = bankstmt.parse(raw, "stmt.csv")
     assert [t.amount_paise for t in parsed.debits] == [50000]
     assert [t.amount_paise for t in parsed.credits] == [90000]
+
+
+def test_phonepe_export_keeps_utr_and_account_ending():
+    raw = phonepe_statement([
+        '"Sept 01, 2026",10:00 AM,"Paid to Pawan Water",abc,611749008851,DEBIT,'
+        '"Paid by XXXXXXXXXX1270","1,300.00"',
+    ])
+    parsed = bankstmt.parse(raw, "phonepe.xlsx")
+    assert parsed.source == "phonepe"
+    assert parsed.debits[0].ref == "611749008851"
+    assert parsed.debits[0].account_ending == "1270"
+    assert bankstmt.counterparty(parsed.debits[0].narration) == (
+        "PAWAN WATER", "Pawan Water")
+
+
+def test_manual_source_selection_rejects_a_mismatched_file():
+    raw = phonepe_statement([
+        '"Sept 01, 2026",10:00 AM,"Paid to Pawan Water",abc,611749008851,DEBIT,'
+        '"Paid by XXXXXXXXXX1270","1,300.00"',
+    ])
+    with pytest.raises(ValueError, match="PhonePe transaction export"):
+        bankstmt.parse(statement_csv(), "hdfc.csv", "phonepe")
+    with pytest.raises(ValueError, match="PhonePe transaction export"):
+        bankstmt.parse(raw, "phonepe.xlsx", "bank")
+    assert bankstmt.parse(raw, "phonepe.xlsx", "phonepe").source == "phonepe"
 
 
 # --- payee ------------------------------------------------------------------
@@ -269,6 +300,78 @@ def test_commit_creates_expenses_and_remembers_the_payee(client, outlet_id):
     assert remembered["ATM WITHDRAWAL"]["skip"] is True
 
 
+def test_statement_payment_method_beats_the_remembered_payee_mode(client, outlet_id):
+    """A supplier is not intrinsically UPI or bank; each statement line is."""
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    cat = category_id(client)
+    first = upload(client, outlet_id).json()
+    client.post(f"/api/bank/{first['batch_id']}/commit", json={"decisions": [
+        {"match_key": "annapurna@okaxis", "category_id": cat,
+         "mode": "cash", "remember": True},
+    ]})
+
+    newer = statement_csv([
+        '15/04/24,UPI-ANNAPURNA VEG-ANNAPURNA@OKAXIS-SBIN0001234-412300010-PAYMENT,'
+        '412300010,15/04/24,500.00,,79,430.20',
+    ])
+    preview = upload(client, outlet_id, newer).json()
+    payee = next(row for row in preview["payees"]
+                 if row["match_key"] == "annapurna@okaxis")
+    assert payee["known"] is True
+    assert payee["mode"] == "upi"
+    assert payee["detected_modes"] == ["upi"]
+
+    result = client.post(f"/api/bank/{preview['batch_id']}/commit", json={
+        "decisions": [{
+            "match_key": "annapurna@okaxis", "category_id": cat,
+            "mode": "cash", "use_detected_mode": True,
+        }],
+    }).json()
+    assert result["created"] == 1
+    rows = expenses(client, outlet_id)
+    assert next(row for row in rows if row["amount_rupees"] == 500.0)["mode"] == "upi"
+
+
+def test_confirmed_payee_decision_can_update_earlier_matching_payments(
+        client, outlet_id):
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    categories = client.get("/api/lists/categories").json()
+    old_category, new_category = categories[:2]
+    old = client.post("/api/expenses", json={
+        "outlet_id": outlet_id, "business_date": "2024-03-30",
+        "category_id": old_category["id"], "amount_rupees": 999,
+        "mode": "cash",
+        "description": (
+            "UPI-ANNAPURNA VEG-ANNAPURNA@OKAXIS-SBIN0001234-412399999-PAYMENT"),
+    })
+    assert old.status_code == 201, old.text
+
+    body = upload(client, outlet_id).json()
+    payee = next(p for p in body["payees"] if p["match_key"] == "annapurna@okaxis")
+    assert payee["previous_count"] == 1
+    assert payee["previous_matches"][0]["id"] == old.json()["id"]
+    assert payee["suggested_category_id"] == old_category["id"]
+    assert payee["suggested_mode"] == "cash"
+    assert payee["suggested_from_count"] == 1
+
+    result = client.post(f"/api/bank/{body['batch_id']}/commit", json={
+        "decisions": [{
+            "match_key": "annapurna@okaxis", "category_id": new_category["id"],
+            "vendor_name": "Annapurna Veg", "mode": "upi",
+            "use_detected_mode": False,
+            "update_previous": True,
+        }],
+    }).json()
+    assert result["updated_previous"] == 1
+
+    historic = client.get(
+        f"/api/expenses?outlet_id={outlet_id}&start=2024-03-01&end=2024-03-31"
+    ).json()["rows"]
+    assert historic[0]["category_id"] == new_category["id"]
+    assert historic[0]["mode"] == "upi"
+    assert historic[0]["vendor_id"] is not None
+
+
 def test_reimporting_an_overlapping_statement_does_not_double_post(client,
                                                                   outlet_id):
     client.post("/api/auth/stepup", json={"password": "change-me-please"})
@@ -288,6 +391,34 @@ def test_reimporting_an_overlapping_statement_does_not_double_post(client,
 
     rows = expenses(client, outlet_id)
     assert len(rows) == 2
+
+
+def test_phonepe_requires_business_account_and_deduplicates_hdfc_utr(client, outlet_id):
+    client.post("/api/auth/stepup", json={"password": "change-me-please"})
+    hdfc = statement_csv([
+        '05/04/24,UPI-PAWAN WATER-pawanwater@okaxis-X-611749008851,611749008851,'
+        '05/04/24,1300.00,,1000.00',
+    ])
+    first = upload(client, outlet_id, hdfc, "hdfc.csv").json()
+    client.post(f"/api/bank/{first['batch_id']}/commit", json={"decisions": [
+        {"match_key": "pawanwater@okaxis", "category_id": category_id(client),
+         "mode": "upi"}]})
+    phonepe = phonepe_statement([
+        '"Sept 01, 2026",10:00 AM,"Paid to Pawan Water",abc,611749008851,DEBIT,'
+        '"Paid by XXXXXXXXXX1270","1,300.00"',
+        '"Sept 01, 2026",10:01 AM,"Paid to Personal",def,611749008852,DEBIT,'
+        '"Paid by XXXXXXXXXX2910","100.00"',
+    ])
+    blocked = upload(client, outlet_id, phonepe, "phonepe.xlsx")
+    assert blocked.status_code == 422
+    assert "multiple accounts" in blocked.json()["detail"]
+    second = client.post(
+        f"/api/bank/upload?outlet_id={outlet_id}&account_ending=1270",
+        files={"file": ("phonepe.xlsx", phonepe, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    ).json()
+    assert second["source"] == "phonepe"
+    assert second["debits"] == 1
+    assert second["already_imported"] == 1
 
 
 def test_unmapped_payees_are_reported_not_guessed(client, outlet_id):

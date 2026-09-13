@@ -2,10 +2,10 @@ import { clsx } from "clsx";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3, CalendarCheck, ChevronDown, CircleDollarSign, ClipboardList,
-  CloudOff, Home, IndianRupee, LayoutDashboard, Lock, LogOut, Menu, Package,
+  CloudOff, Home, IndianRupee, Lock, LogOut, Menu, Package,
   Settings, type LucideIcon,
 } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useBlocker, useLocation, useNavigate } from "react-router-dom";
 import {
   flushOutbox, getOutbox, removeOutbox, subscribeOutbox,
@@ -14,9 +14,10 @@ import { api } from "../api/client";
 import { clearCachedMe, useAuth } from "../lib/auth";
 import { fmtDate, todayISO } from "../lib/format";
 import { useMoney } from "../lib/money";
-import { Button, Sheet, Spinner } from "./ui";
+import { Button, Select, Sheet, Spinner } from "./ui";
+import OnboardingGuide, { OnboardingGuideTrigger } from "./OnboardingGuide";
 
-type OutletRow = { id: number; name: string };
+type OutletRow = { id: number; name: string; is_active?: boolean };
 type DirtyDraft = { label: string; discard: () => void };
 
 const DraftGuardContext = createContext<{
@@ -29,6 +30,34 @@ export const useDraftGuard = () => useContext(DraftGuardContext);
 
 const OUTLETS_CACHE = "ledger_outlets";
 
+function usableOutlets(rows: unknown, permittedIds: number[]): OutletRow[] {
+  if (!Array.isArray(rows)) return [];
+  const permitted = new Set(permittedIds);
+  return rows.filter((row): row is OutletRow => {
+    if (!row || typeof row !== "object") return false;
+    const outlet = row as OutletRow;
+    return Number.isInteger(outlet.id) && outlet.id > 0
+      && typeof outlet.name === "string" && outlet.name.trim().length > 0
+      && outlet.is_active !== false && permitted.has(outlet.id);
+  });
+}
+
+function storedOutletId(): number | null {
+  try {
+    const id = Number(localStorage.getItem("ledger_outlet"));
+    return Number.isInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeOutletId(id: number | null) {
+  try {
+    if (id === null) localStorage.removeItem("ledger_outlet");
+    else localStorage.setItem("ledger_outlet", String(id));
+  } catch { /* Selection remains valid even when browser storage is unavailable. */ }
+}
+
 // The bottom bar names the four things done every day. Naming the *action*
 // matters: "Staff" made someone hunt for attendance, because the label
 // described a filing cabinet rather than the job in front of them.
@@ -39,30 +68,13 @@ export const TABS = [
   { to: "/money/expenses", label: "Expenses", icon: CircleDollarSign },
 ];
 
-/** Accordion model for the desktop rail: parents stay collapsed; the open
- *  group reveals its children. One open group at a time.
- *
- *  The first group is the daily round, lifted out by cadence: attendance,
- *  sales, expenses and the cash count used to sit in three different groups —
- *  attendance under Staff, sales under Sales, expenses and the cash count
- *  under Money — so a single shift meant learning an accountant's filing
- *  system first.
- *
- *  The rest are the records those entries land in, named by money direction
- *  where there is one: Sales is money in, Spending is money out (who you buy
- *  from, what they charge, what left the bank). An earlier pass called that
- *  last group "Suppliers & bank", which was not a category at all — it was
- *  the leftovers after the daily jobs were pulled out of "Money", with the
- *  members listed in place of a name. A group whose label is an "&" of its
- *  own contents is a junk drawer.
- *
- *  Every route belongs to exactly one group, so "which group am I in?"
- *  always has one answer. */
+/** Task-based workspaces. Every screen has one parent. */
 export const GROUPS = [
   {
-    key: "today", label: "Every day", icon: ClipboardList,
-    base: "/staff/attendance",
+    key: "today", label: "Daily work", icon: ClipboardList,
+    base: "/brief",
     children: [
+      { to: "/brief", label: "Today’s brief" },
       { to: "/staff/attendance", label: "Attendance" },
       { to: "/sales", label: "Enter sales" },
       { to: "/money/expenses", label: "Expenses" },
@@ -70,16 +82,20 @@ export const GROUPS = [
     ],
   },
   {
-    key: "sales", label: "Sales records", icon: IndianRupee, base: "/sales/bills",
+    key: "sales", label: "Sales & insights", icon: BarChart3,
+    base: "/reports/analytics",
     children: [
+      { to: "/reports/analytics", label: "Analytics & graphs" },
+      { to: "/reports", label: "Monthly reports" },
       { to: "/sales/bills", label: "Bills & history" },
       { to: "/sales/import", label: "Import from POS", owner: true },
     ],
   },
   {
-    key: "spending", label: "Spending", icon: CircleDollarSign,
-    base: "/money/vendors",
+    key: "operations", label: "Suppliers & stock", icon: Package,
+    base: "/inventory",
     children: [
+      { to: "/inventory", label: "Inventory" },
       { to: "/money/vendors", label: "Suppliers" },
       { to: "/money/purchase-orders", label: "Purchase orders" },
       { to: "/money/unitprices", label: "What you pay per kg" },
@@ -87,7 +103,8 @@ export const GROUPS = [
     ],
   },
   {
-    key: "staff", label: "Staff", icon: CalendarCheck, base: "/staff/people",
+    key: "staff", label: "Team & payroll", icon: CalendarCheck,
+    base: "/staff/people",
     children: [
       { to: "/staff/people", label: "People" },
       { to: "/staff/shifts", label: "Shifts board" },
@@ -124,22 +141,6 @@ const SECTIONS: {
   match: (path: string) => boolean;
 }[] = [
   {
-    to: "/inventory", label: "Inventory", icon: Package,
-    match: (p) => p.startsWith("/inventory"),
-  },
-  {
-    to: "/brief", label: "Today's brief", icon: ClipboardList,
-    match: (p) => p.startsWith("/brief"),
-  },
-  {
-    to: "/reports", label: "Monthly reports", icon: LayoutDashboard,
-    match: (p) => p.startsWith("/reports") && !p.includes("analytics"),
-  },
-  {
-    to: "/reports/analytics", label: "Deep analysis", icon: BarChart3,
-    match: (p) => p.includes("analytics"),
-  },
-  {
     to: "/settings", label: "Settings", icon: Settings, owner: true,
     match: (p) => p.startsWith("/settings"),
   },
@@ -174,19 +175,20 @@ export default function Layout() {
     };
   }, []);
   const isOffline = !navOnline || authOffline;
+  const permittedOutletIds = me?.outlet_ids;
   const [outlets, setOutlets] = useState<OutletRow[]>([]);
-  const [outletsLoaded, setOutletsLoaded] = useState(false);
-  const [outletId, setOutletId] = useState<number>(() =>
-    Number(localStorage.getItem("ledger_outlet") || 0));
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [outletStatus, setOutletStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [outletId, setOutletId] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [outboxOpen, setOutboxOpen] = useState(false);
   const [apiError, setApiError] = useState("");
   const [errorSticky, setErrorSticky] = useState(false);
+  const errorTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [dirtyDraft, setDirtyDraft] = useState<DirtyDraft | null>(null);
   const dirtyDraftRef = useRef<DirtyDraft | null>(null);
   const [pendingDiscard, setPendingDiscard] = useState<(() => void) | null>(null);
   const bypassBlockerRef = useRef(false);
+  const outletRequestRef = useRef(0);
   const [syncStatus, setSyncStatus] = useState("");
   const queryClient = useQueryClient();
   const nav = useNavigate();
@@ -205,6 +207,17 @@ export default function Layout() {
     if (dirtyDraftRef.current) setPendingDiscard(() => action);
     else action();
   }, []);
+  const clearApiErrorTimer = useCallback(() => {
+    if (errorTimerRef.current !== null) {
+      window.clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = null;
+    }
+  }, []);
+  const dismissApiError = useCallback(() => {
+    clearApiErrorTimer();
+    setApiError("");
+    setErrorSticky(false);
+  }, [clearApiErrorTimer]);
 
   // MoneyProvider sits above AuthProvider, so its first fetch happens on the
   // login screen and 401s. Layout only mounts once signed in, so refresh here
@@ -219,7 +232,13 @@ export default function Layout() {
   useEffect(() => {
     if (activeGroup) setOpenGroup(activeGroup.key);
   }, [activeGroup?.key]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setMobileMenuOpen(false); }, [loc.pathname]);
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    // A load error belongs to the page that requested it. Keeping it visible
+    // after navigation makes a working screen look broken and obscures the
+    // request that actually needs a retry.
+    dismissApiError();
+  }, [dismissApiError, loc.pathname]);
 
   // offline outbox: flush when we come back online / every minute
   const [outbox, setOutbox] = useState(getOutbox());
@@ -234,78 +253,109 @@ export default function Layout() {
   useEffect(() => {
     const showError = (event: Event) => {
       const d = (event as CustomEvent<{ message: string; sticky: boolean }>).detail;
+      clearApiErrorTimer();
       setApiError(d.message);
-      if (!d.sticky) window.setTimeout(() => setApiError(""), 6000);
       setErrorSticky(d.sticky);
+      if (!d.sticky) {
+        const timer = window.setTimeout(() => {
+          if (errorTimerRef.current !== timer) return;
+          errorTimerRef.current = null;
+          setApiError("");
+          setErrorSticky(false);
+        }, 6000);
+        errorTimerRef.current = timer;
+      }
     };
     window.addEventListener("ledger:api-error", showError);
-    return () => window.removeEventListener("ledger:api-error", showError);
-  }, []);
+    return () => {
+      window.removeEventListener("ledger:api-error", showError);
+      clearApiErrorTimer();
+    };
+  }, [clearApiErrorTimer]);
+
+  const loadOutlets = useCallback(async () => {
+    const request = ++outletRequestRef.current;
+    setOutletStatus("loading");
+    setOutlets([]);
+    setOutletId(null);
+    const resolve = (rows: unknown) => {
+      if (request !== outletRequestRef.current) return;
+      const available = usableOutlets(rows, permittedOutletIds ?? []);
+      const saved = storedOutletId();
+      const nextId = available.find((outlet) => outlet.id === saved)?.id ?? available[0]?.id;
+      setOutlets(available);
+      if (nextId) {
+        storeOutletId(nextId);
+        setOutletId(nextId);
+        setOutletStatus("ready");
+      } else {
+        storeOutletId(null);
+        setOutletId(null);
+        setOutletStatus("unavailable");
+      }
+    };
+
+    try {
+      const rows = await api.get("/outlets");
+      if (Array.isArray(rows)) {
+        try {
+          localStorage.setItem(OUTLETS_CACHE, JSON.stringify(rows));
+        } catch { /* Cache storage is optional. */ }
+      }
+      resolve(rows);
+    } catch {
+      let cached: unknown = null;
+      try {
+        const raw = localStorage.getItem(OUTLETS_CACHE);
+        cached = raw ? JSON.parse(raw) : null;
+      } catch { /* A corrupt cache is not a source of outlet authority. */ }
+      resolve(cached);
+    }
+  }, [permittedOutletIds]);
 
   useEffect(() => {
-    api.get("/outlets").then((rows) => {
-      setOutlets(rows);
-      localStorage.setItem(OUTLETS_CACHE, JSON.stringify(rows));
-      if (!rows.find((r: OutletRow) => r.id === outletId) && rows.length) {
-        pick(rows[0].id);
-      }
-    }).catch(() => {
-      // Offline the outlet name would otherwise be blank in the header while
-      // entries are still being filed against its id, which reads like the
-      // app has lost track of which outlet you are in.
-      try {
-        const cached = localStorage.getItem(OUTLETS_CACHE);
-        if (cached) setOutlets(JSON.parse(cached));
-      } catch { /* a corrupt cache must not block the app */ }
-    }).finally(() => setOutletsLoaded(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadOutlets();
+    return () => { outletRequestRef.current += 1; };
+  }, [loadOutlets]);
 
   const pick = (id: number) => {
     requestDiscard(() => {
+      if (!outlets.some((outlet) => outlet.id === id)) return;
       setOutletId(id);
-      localStorage.setItem("ledger_outlet", String(id));
+      storeOutletId(id);
       window.dispatchEvent(new CustomEvent("outlet-changed", { detail: id }));
-      setSwitcherOpen(false);
       nav("/");                     // switching outlet lands on Home
     });
   };
+  const signOut = () => requestDiscard(() => {
+    void (async () => {
+      try {
+        await api.post("/auth/logout");
+      } catch {
+        /* offline: clearing the local session below is what matters */
+      }
+      clearCachedMe();
+      localStorage.removeItem(OUTLETS_CACHE);
+      setMe(null);
+      nav("/login", { replace: true });
+    })();
+  });
   if (me === null) return null;
-  const current = outlets.find((o) => o.id === outletId);
+  const current = outlets.find((outlet) => outlet.id === outletId);
+  const outletReady = outletStatus === "ready" && current !== undefined;
 
   return (
     <DraftGuardContext.Provider value={{ registerDirtyDraft, requestDiscard }}>
     <div className="min-h-screen md:flex">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       {/* Desktop rail */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-rule bg-paper px-3 py-4 md:flex">
-        <div className="relative mb-4">
-          <button
-            onClick={() => outlets.length > 1 && setSwitcherOpen(!switcherOpen)}
-            aria-expanded={switcherOpen}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-paper-3">
-            <div>
-              <div className="text-[11px] uppercase tracking-[0.14em] text-ink-faint">Outlet</div>
-              <div className="flex items-center gap-1 font-semibold">
-                {current?.name ?? "…"}
-                {outlets.length > 1 && <ChevronDown size={14} />}
-              </div>
-            </div>
-          </button>
-          {switcherOpen && (
-            <div className="absolute inset-x-0 top-full z-40 mt-1 rounded-md border border-rule-strong bg-paper p-1 shadow-sheet">
-              {outlets.map((outlet) => (
-                <button key={outlet.id} onClick={() => pick(outlet.id)}
-                        className={clsx(
-                          "w-full rounded px-2 py-2 text-left text-sm hover:bg-paper-3",
-                          outlet.id === outletId && "font-semibold text-accent",
-                        )}>
-                  {outlet.name}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="mb-4 px-2">
+          <span className="text-sm text-ink-soft">Outlet</span>
+          <OutletControl label="Outlet" status={outletStatus} current={current} outlets={outlets}
+                         onPick={pick} className="mt-1 font-semibold" />
         </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto">
+        <nav aria-label="Main navigation" className="flex-1 space-y-1 overflow-y-auto">
           <RailLink to="/" label="Home" icon={Home} active={loc.pathname === "/"} />
           {GROUPS.filter((g) => g.children.some((c: any) => !c.owner || me.role === "owner"))
                  .map((g) => {
@@ -315,32 +365,31 @@ export default function Layout() {
             return (
               <div key={g.key}>
                 <button
-                  onClick={() => {
-                    if (loc.pathname === g.base) {
-                      setOpenGroup(isOpen ? null : g.key);
-                    } else nav(g.base);
-                  }}
+                  onClick={() => setOpenGroup(isOpen ? null : g.key)}
+                  aria-expanded={isOpen}
+                  aria-controls={`nav-${g.key}`}
                   className={clsx(
                     "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm",
-                    childActive ? "font-semibold text-accent" : "hover:bg-paper-3")}>
+                    childActive ? "font-semibold text-accent hover:bg-paper-3" : "hover:bg-paper-3")}>
                   <g.icon size={17} strokeWidth={1.75}
                           className={childActive ? "text-accent" : "text-ink-faint"} />
                   <span className="flex-1 text-left">{g.label}</span>
-                  {childActive && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
                   <ChevronDown size={14}
                                className={clsx("transition-transform", isOpen && "rotate-180")} />
                 </button>
                 {isOpen && (
-                  <div className="ml-[15px] border-l border-rule pl-2">
+                  <div id={`nav-${g.key}`} className="ml-[15px] border-l border-rule pl-2">
                     {visible.map((c: any) => {
                       const a = activeChild?.c.to === c.to;
                       return (
                         <Link key={c.to} to={c.to}
+                              aria-current={a ? "page" : undefined}
                               className={clsx(
-                                "block rounded-md px-2 py-1.5 text-sm",
+                                "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
                                 a ? "bg-accent-soft font-semibold text-accent"
                                   : "text-ink-soft hover:bg-paper-3")}>
-                          {c.label}
+                          <span className="flex-1">{c.label}</span>
+                          {a && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
                         </Link>
                       );
                     })}
@@ -358,51 +407,38 @@ export default function Layout() {
               ))}
           </div>
         </nav>
-        <OwnerBox onSignOut={() => requestDiscard(() => {
-                    void (async () => {
-                      try {
-                        await api.post("/auth/logout");
-                      } catch {
-                        /* offline: clearing the local session below is what matters */
-                      }
-                      clearCachedMe();
-                      localStorage.removeItem(OUTLETS_CACHE);
-                      setMe(null);
-                      nav("/login", { replace: true });
-                    })();
-                  })} />
+        <OwnerBox onSignOut={signOut} />
       </aside>
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-rule bg-paper/95 px-4 py-2.5 backdrop-blur md:px-8">
-          <div className="md:hidden">
-            <select
-              aria-label="Switch outlet"
-              value={outletId} onChange={(e) => pick(Number(e.target.value))}
-              className="min-h-11 rounded-md bg-paper-3 px-2 py-1 text-sm font-semibold">
-              {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-2 border-b border-rule bg-paper px-4 py-2.5 md:px-8">
+          <div className="min-w-0 flex-1 md:hidden">
+            <OutletControl label="Switch outlet" status={outletStatus} current={current} outlets={outlets}
+                           onPick={pick}
+                           className="max-w-64 border-transparent bg-paper-3 px-3 font-semibold" />
           </div>
           <div className="hidden text-sm text-ink-soft md:block">{fmtDate(todayISO())}</div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {outbox.length > 0 && (
               <button onClick={() => setOutboxOpen(true)}
                       title="Review entries waiting to sync"
-                      className="inline-flex min-h-9 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                      className="inline-flex min-h-11 items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                 <CloudOff size={12} /> {outbox.length} pending
               </button>
             )}
             <LockHint />
+            {outletReady && <OnboardingGuideTrigger />}
             <button onClick={() => nav("/settings/account")}
-                    className="inline-flex min-h-11 items-center rounded-full bg-paper-3 px-3 py-1.5 text-sm font-medium">
-              {me.full_name || me.username}
+                    aria-label={`Account for ${me.full_name || me.username}`}
+                    className="inline-flex min-h-11 max-w-24 items-center rounded-md bg-paper-3 px-3 py-1.5 text-sm font-medium sm:max-w-48">
+              <span className="truncate">{me.full_name || me.username}</span>
             </button>
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24 pt-4 md:px-8 md:pb-10">
+        <main id="main-content" tabIndex={-1} className="app-main mx-auto w-full max-w-5xl flex-1 px-4 pt-4 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:px-8 md:pb-0">
           {isOffline && (
             <div role="status"
                  className="mb-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -421,13 +457,13 @@ export default function Layout() {
                 <>
                   <button className="shrink-0 font-medium underline"
                           onClick={() => {
-                            setApiError("");
+                            dismissApiError();
                             void queryClient.refetchQueries({ type: "active" });
                           }}>
                     Retry
                   </button>
                   <button aria-label="Dismiss" className="shrink-0 opacity-60 hover:opacity-100"
-                          onClick={() => setApiError("")}>✕</button>
+                          onClick={dismissApiError}>✕</button>
                 </>
               )}
             </div>
@@ -435,27 +471,36 @@ export default function Layout() {
           {/* Pages read outletId from this context and put it straight into
               their API calls, so rendering before /outlets resolves fires
               outlet_id=0 (or a stale id) and 403s on every first login. */}
-          {outletsLoaded ? <Outlet context={{ outletId }} /> : <Spinner />}
+          {outletReady ? (
+            <Suspense fallback={<Spinner label="Loading page…" />}>
+              <Outlet context={{ outletId: current.id }} />
+            </Suspense>
+          ) : outletStatus === "loading"
+            ? <Spinner label="Loading outlets…" />
+            : <OutletUnavailable offline={isOffline} onRetry={loadOutlets} />}
         </main>
       </div>
 
       {/* Mobile bottom tabs */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-rule-strong bg-paper/95 backdrop-blur md:hidden"
+      <nav aria-label="Daily navigation" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-rule-strong bg-paper md:hidden"
            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {TABS.map(({ to, label, icon: Icon }) => {
           const active = to === "/" ? loc.pathname === "/"
                                     : activeChild?.c.to === to;
           return (
             <Link key={to} to={to}
+              aria-current={active ? "page" : undefined}
               className={clsx(
-                "flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium",
-                active ? "text-accent" : "text-ink-faint")}>
+                "flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium",
+                active ? "bg-accent-soft text-accent" : "text-ink-soft")}>
               <Icon size={20} strokeWidth={1.75} />
               {label}
             </Link>
           );
         })}
         <button onClick={() => setMobileMenuOpen(true)}
+                aria-haspopup="dialog"
+                aria-expanded={mobileMenuOpen}
                 className={clsx(
                   "flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium",
                   // Highlight whenever the current page isn't one of the four
@@ -463,12 +508,17 @@ export default function Layout() {
                   SECTIONS.some((s) => s.match(loc.pathname))
                     || (loc.pathname !== "/"
                         && !TABS.some((t) => activeChild?.c.to === t.to))
-                    ? "text-accent" : "text-ink-faint",
+                    ? "bg-accent-soft text-accent" : "text-ink-soft",
                 )}>
           <Menu size={20} strokeWidth={1.75} />
           More
         </button>
       </nav>
+      {outletReady && (
+        <OnboardingGuide isOwner={me.role === "owner"} outletId={current.id}
+                         outletName={current.name} fullName={me.full_name}
+                         username={me.username} />
+      )}
       <Sheet open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)}
              title="Everything else">
         {/* The bottom bar holds Home and three daily jobs. Everything else in
@@ -489,7 +539,10 @@ export default function Layout() {
                   .filter((c: any) => !c.owner || me.role === "owner")
                   .map((c: any) => (
                     <Link key={c.to} to={c.to}
-                          className="rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
+                          aria-current={activeChild?.c.to === c.to ? "page" : undefined}
+                          onClick={() => setMobileMenuOpen(false)}
+                          className={clsx("rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3",
+                            activeChild?.c.to === c.to && "bg-accent-soft text-accent")}>
                       {c.label}
                     </Link>
                   ))}
@@ -497,19 +550,23 @@ export default function Layout() {
             </div>
           ))}
           <div>
-            <div className="label-caps mb-1.5">Reports & setup</div>
+            <div className="label-caps mb-1.5">Settings</div>
             <div className="grid grid-cols-2 gap-2">
               {SECTIONS
                 .filter((s) => !s.owner || me.role === "owner")
-                .map(({ to, label, icon: Icon }) => (
+                .map(({ to, label, icon: Icon, match }) => (
                   <Link key={to} to={to}
-                        className="flex items-center gap-2 rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3">
+                        aria-current={match(loc.pathname) ? "page" : undefined}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={clsx("flex items-center gap-2 rounded-md border border-rule-strong px-3 py-3 text-sm font-semibold hover:bg-paper-3",
+                          match(loc.pathname) && "bg-accent-soft text-accent")}>
                     <Icon size={16} strokeWidth={1.75} className="shrink-0 text-ink-faint" />
                     {label}
                   </Link>
                 ))}
             </div>
           </div>
+          <OwnerBox onSignOut={() => { setMobileMenuOpen(false); signOut(); }} />
         </div>
       </Sheet>
       <Sheet open={outboxOpen} onClose={() => setOutboxOpen(false)}
@@ -573,14 +630,68 @@ export default function Layout() {
   );
 }
 
+function OutletControl({ label, status, current, outlets, onPick, className }: {
+  label: string;
+  status: "loading" | "ready" | "unavailable";
+  current: OutletRow | undefined;
+  outlets: OutletRow[];
+  onPick: (id: number) => void;
+  className?: string;
+}) {
+  if (!current) {
+    return (
+      <div role="status" aria-live="polite"
+           className={clsx("outlet-identity flex min-h-11 w-full items-center rounded-md text-sm text-ink-faint", className)}>
+        {status === "loading" ? "Loading outlets…" : "Outlet unavailable"}
+      </div>
+    );
+  }
+  if (outlets.length === 1) {
+    return (
+      <div className={clsx("outlet-identity flex min-h-11 w-full items-center rounded-md text-sm", className)}>
+        <span className="sr-only">Current outlet: </span>
+        <span className="truncate">{current.name}</span>
+      </div>
+    );
+  }
+  return (
+    <Select aria-label={label} value={current.id}
+            onChange={(event) => onPick(Number(event.target.value))}
+            className={clsx("min-h-11", className)}>
+      {outlets.map((outlet) => (
+        <option key={outlet.id} value={outlet.id}>{outlet.name}</option>
+      ))}
+    </Select>
+  );
+}
+
+function OutletUnavailable({ offline, onRetry }: { offline: boolean; onRetry: () => void }) {
+  return (
+    <section role="alert" aria-labelledby="outlet-unavailable-heading"
+             className="mx-auto flex max-w-md flex-col items-start gap-3 py-14">
+      <div>
+        <h1 id="outlet-unavailable-heading" className="text-xl font-semibold">Outlet unavailable</h1>
+        <p className="mt-1 text-sm text-ink-soft">
+          {offline
+            ? "Reconnect, then retry so Ledger can confirm an active outlet for this session."
+            : "Ledger could not confirm an active outlet you can use. Retry, or ask the owner to check your outlet access."}
+        </p>
+      </div>
+      <Button variant="outline" onClick={onRetry}>Retry outlets</Button>
+    </section>
+  );
+}
+
 function RailLink({ to, label, icon: Icon, active }: any) {
   return (
     <Link to={to}
+          aria-current={active ? "page" : undefined}
           className={clsx("flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm",
             active ? "bg-accent-soft font-semibold text-accent" : "hover:bg-paper-3")}>
       {Icon && <Icon size={17} strokeWidth={1.75}
                      className={active ? "text-accent" : "text-ink-faint"} />}
-      {label}
+      <span className="flex-1">{label}</span>
+      {active && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
     </Link>
   );
 }
@@ -636,7 +747,12 @@ function LockHint() {
   const elevated = Boolean(
     me.elevated_until && new Date(me.elevated_until).getTime() > Date.now()
   );
-  return elevated
-    ? <span title="Owner mode unlocked" className="text-good"><Lock size={15} /></span>
-    : <span title="Locked — password needed for old edits" className="text-ink-faint"><Lock size={15} /></span>;
+  return (
+    <span role="status" aria-label={`Owner mode: ${elevated ? "unlocked" : "locked"}`}
+          className={clsx("inline-flex items-center gap-1 text-xs font-medium",
+            elevated ? "text-good" : "text-ink-faint")}>
+      <Lock size={15} aria-hidden="true" />
+      Owner: {elevated ? "unlocked" : "locked"}
+    </span>
+  );
 }

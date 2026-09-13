@@ -17,7 +17,7 @@ from ..models import (Expense, SalesDaily, SalesItem, StockCount,
                       StockCountLine, StockItem, StockLink, StockMovement,
                       User)
 from ..security import current_user, require_owner
-from ..util import now_local
+from ..util import now_local, validate_business_date
 from .helpers import assert_outlet_access, user_outlet_ids
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -252,6 +252,7 @@ class WastageIn(BaseModel):
 def add_wastage(body: WastageIn, user: User = Depends(current_user),
                 db: Session = Depends(get_db)):
     assert_outlet_access(db, user, body.outlet_id)
+    validate_business_date(body.business_date, label="Wastage date", no_future=True)
     check_edit_window(body.business_date, user, db)
     assert_month_open(db, body.outlet_id, body.business_date)
     si = (
@@ -572,6 +573,7 @@ def start_count(outlet_id: int, business_date: str | None = None,
                 user: User = Depends(current_user), db: Session = Depends(get_db)):
     assert_outlet_access(db, user, outlet_id)
     bd = business_date or now_local().date().isoformat()
+    validate_business_date(bd, label="Inventory-count date", no_future=True)
     assert_month_open(db, outlet_id, bd)
     existing = (db.query(StockCount)
                   .filter_by(outlet_id=outlet_id, business_date=bd,

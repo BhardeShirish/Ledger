@@ -71,7 +71,7 @@ describe("Daily Brief month projection", () => {
 
   it("shows the projection once the month has sales in it", async () => {
     show({ month: "2026-09", has_basis: true, so_far_rupees: 40000,
-           projected_rupees: 300000, target_rupees: null });
+           projected_rupees: 300000.49, target_rupees: null });
     expect(await screen.findByText("₹3,00,000")).toBeInTheDocument();
     expect(screen.queryByText("no sales recorded yet this month"))
       .not.toBeInTheDocument();
@@ -102,5 +102,46 @@ describe("Daily Brief month projection", () => {
     expect(screen.getByText("Drawer has not been closed").closest("a"))
       .toHaveAttribute("href", "/money/cash");
     expect(screen.getByText(/high confidence/)).toBeInTheDocument();
+  });
+
+  it("states repeated unreconciled cash once, with the count, money and one bank action", async () => {
+    const deposit = (id: number, paise: number) => ({
+      id: `control.cash_deposit:deposit:${id}`, bucket: "act_today", kind: "risk",
+      severity: "critical", title: "Cash removed from drawer is not reconciled to bank",
+      detail: "This is blocking or weakening a controlled month close.",
+      action: { label: "Review and resolve", href: "/money/bank" },
+      confidence: { level: "high", reason: "Computed from recorded Ledger facts." },
+      metric: { value_paise: paise, observations: 1 },
+    });
+    show({ month: "2026-09", has_basis: false, so_far_rupees: 0, projected_rupees: null }, {
+      health: { status: "provisional", overall_score: 62, eligible_dimensions: 5 },
+      ai: { configured: false },
+      feed: [
+        deposit(1, 100000), deposit(2, 50000), deposit(3, 25000),
+        {
+          id: "control.cash_variance:variance:9", bucket: "act_today", kind: "risk",
+          severity: "warning", title: "Drawer variance is above the alert threshold",
+          detail: "This is blocking or weakening a controlled month close.",
+          action: { label: "Review and resolve", href: "/money/cash" },
+          confidence: { level: "high", reason: "Computed from recorded Ledger facts." },
+          metric: { value_paise: 4000, observations: 1 },
+        },
+      ],
+    });
+
+    // Three identical findings collapse to one summary carrying the count,
+    // the money, and a single /money/bank destination.
+    const summary = await screen.findByText(/Cash removed from drawer is not reconciled to bank/);
+    expect(screen.getAllByText(/Cash removed from drawer is not reconciled to bank/)).toHaveLength(1);
+    expect(summary.textContent).toContain("3 times");
+    expect(summary.closest("a")).toHaveAttribute("href", "/money/bank");
+    expect(screen.getByText(/₹1,750 across 3 records is still open/)).toBeInTheDocument();
+
+    // Each one is still individually reviewable, and the materially different
+    // finding is never folded away.
+    expect(screen.getByText("Review each of the 3 separately")).toBeInTheDocument();
+    expect(screen.getByText("control.cash_deposit:deposit:2")).toBeInTheDocument();
+    expect(screen.getByText("Drawer variance is above the alert threshold").closest("a"))
+      .toHaveAttribute("href", "/money/cash");
   });
 });

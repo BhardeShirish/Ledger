@@ -1,4 +1,5 @@
 """Payroll runs — owner only, step-up gated (salary data)."""
+import math
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -176,15 +177,23 @@ def adjust(slip_id: int, body: AdjustIn, db: Session = Depends(get_db),
     kind = body.kind
     value = None
     if kind == "bonus_days":
-        value = int(round((body.days or 0) * 10))
+        raw_value = body.days
+        multiplier = 10
     elif kind == "bonus_amt":
-        value = int(round((body.amount_rupees or 0) * 100))
+        raw_value = body.amount_rupees
+        multiplier = 100
     elif kind == "deduction":
-        value = int(round((body.amount_rupees or 0) * 100))
+        raw_value = body.amount_rupees
+        multiplier = 100
     else:
         raise HTTPException(422, "Bad adjustment kind")
-    if not value:
-        raise HTTPException(422, "Value required")
+    if raw_value is None or not math.isfinite(raw_value) or raw_value <= 0:
+        raise HTTPException(422, "Adjustment value must be positive and finite")
+    value = int(round(raw_value * multiplier))
+    if value <= 0:
+        raise HTTPException(422, "Adjustment value is too small")
+    if not body.reason.strip():
+        raise HTTPException(422, "Adjustment reason is required")
     a = PayslipAdjustment(payslip_id=slip.id, kind=kind, value_x10_or_paise=value,
                           reason=body.reason, added_by=user.id)
     db.add(a)

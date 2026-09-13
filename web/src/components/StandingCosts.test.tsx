@@ -6,9 +6,13 @@ import { CostGroupsCard, HealthyBandsCard, StandingCostsCard } from "./StandingC
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), del: vi.fn(),
+  role: "owner",
 }));
 vi.mock("../api/client", () => ({ api: mocks }));
-vi.mock("../lib/auth", () => ({ useGuarded: () => (fn: () => any) => fn() }));
+vi.mock("../lib/auth", () => ({
+  useGuarded: () => (fn: () => any) => fn(),
+  useAuth: () => ({ me: { role: mocks.role } }),
+}));
 
 const BANDS = {
   items: [
@@ -78,30 +82,35 @@ beforeEach(() => {
   mocks.post.mockResolvedValue({ id: 9, posted_now: 1 });
   mocks.del.mockResolvedValue({ ok: true });
   mocks.patch.mockResolvedValue({ ok: true });
+  mocks.role = "owner";
 });
 
 describe("standing costs", () => {
   beforeEach(() => route({ "/recurring": RECURRING, "/lists/categories": CATEGORIES }));
 
   it("shows what repeats every month and what it adds up to", async () => {
-    show(<StandingCostsCard />);
+    show(<StandingCostsCard outletId={1} />);
     expect(await screen.findByText("Shop rent")).toBeInTheDocument();
-    expect(screen.getByText("₹46,200 a month")).toBeInTheDocument();
+    expect(screen.getByText((_, element) =>
+      element?.textContent === "₹46,200 a month")).toBeInTheDocument();
   });
 
   it("shows the yearly weight of a monthly cost, which is what stings", async () => {
-    show(<StandingCostsCard />);
-    expect(await screen.findByText(/₹5,40,000\/year/)).toBeInTheDocument();
+    show(<StandingCostsCard outletId={1} />);
+    expect(await screen.findByText((_, element) =>
+      element?.tagName === "P" && Boolean(element.textContent?.includes("₹5,40,000/year"))))
+      .toBeInTheDocument();
   });
 
-  it("does not list a cost the owner already stopped", async () => {
-    show(<StandingCostsCard />);
+  it("moves a stopped cost out of active costs and offers a restart", async () => {
+    show(<StandingCostsCard outletId={1} />);
     await screen.findByText("Shop rent");
-    expect(screen.queryByText("Old signboard rent")).not.toBeInTheDocument();
+    expect(screen.getByText("Old signboard rent")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart from this month" })).toBeInTheDocument();
   });
 
   it("says plainly that stopped costs keep the months they paid", async () => {
-    show(<StandingCostsCard />);
+    show(<StandingCostsCard outletId={1} />);
     expect(await screen.findByText(/keep the months they already posted/))
       .toBeInTheDocument();
   });
@@ -109,22 +118,44 @@ describe("standing costs", () => {
   it("warns an empty shop that its rent is missing from every report", async () => {
     route({ "/recurring": { monthly_total_rupees: 0, yearly_total_rupees: 0, items: [] },
             "/lists/categories": CATEGORIES });
-    show(<StandingCostsCard />);
+    show(<StandingCostsCard outletId={1} />);
     expect(await screen.findByText(/your rent is missing from every report/))
       .toBeInTheDocument();
   });
 
-  it("stops the cost the owner clicked, not merely some cost", async () => {
-    show(<StandingCostsCard />);
+  it("confirms stopping the cost the owner clicked and keeps past transactions", async () => {
+    show(<StandingCostsCard outletId={1} />);
     fireEvent.click(await screen.findByLabelText("Stop Broadband"));
+    expect(await screen.findByText("Stop Broadband?")).toBeInTheDocument();
+    expect(screen.getByText(/does not delete or change past transactions/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop future costs" }));
     await waitFor(() => expect(mocks.del).toHaveBeenCalledWith("/recurring/2"));
   });
 
   it("says so when the list cannot be loaded rather than showing nothing", async () => {
     route({ "/lists/categories": CATEGORIES });
-    show(<StandingCostsCard />);
+    show(<StandingCostsCard outletId={1} />);
     expect(await screen.findByText(/Couldn't load your standing costs/))
       .toBeInTheDocument();
+  });
+
+  it("posts a new standing cost to the active outlet", async () => {
+    show(<StandingCostsCard outletId={1} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Add a monthly cost/ }));
+    fireEvent.change(screen.getByPlaceholderText("Shop rent"), { target: { value: "Gas bill" } });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "7" } });
+    fireEvent.change(screen.getAllByRole("textbox")[1], { target: { value: "1200" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith("/recurring", expect.objectContaining({
+      outlet_id: 1, category_id: 7, amount_rupees: 1200,
+    })));
+  });
+
+  it("offers a restart path that only resumes future monthly postings", async () => {
+    show(<StandingCostsCard outletId={1} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Restart from this month" }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith("/recurring/3/restart"));
+    expect(await screen.findByText(/Restarted from this month/)).toBeInTheDocument();
   });
 });
 
@@ -143,6 +174,22 @@ describe("cost groups", () => {
     fireEvent.change(row.querySelector("select")!, { target: { value: "operating" } });
     await waitFor(() => expect(mocks.patch).toHaveBeenCalled());
     expect(mocks.patch.mock.calls[0][1]).toMatchObject({ cost_group: "operating" });
+    expect(await screen.findByText(/P&L now uses this line/)).toBeInTheDocument();
+  });
+
+  it("disables the mapping controls for a non-owner", async () => {
+    mocks.role = "manager";
+    show(<CostGroupsCard />);
+    expect(await screen.findByLabelText("P&L line for Rent")).toBeDisabled();
+  });
+
+  it("keeps the category visible and explains a failed mapping save", async () => {
+    mocks.patch.mockRejectedValue(new Error("Password re-verification required"));
+    show(<CostGroupsCard />);
+    const select = await screen.findByLabelText("P&L line for Rent");
+    fireEvent.change(select, { target: { value: "operating" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Password re-verification required");
+    expect(select).toHaveValue("occupancy");
   });
 });
 
@@ -160,6 +207,16 @@ describe("healthy bands", () => {
     show(<HealthyBandsCard />);
     expect(await screen.findByText("Wages, staff food and welfare."))
       .toBeInTheDocument();
+  });
+
+  it("keeps percentage controls fixed-width so they cannot cover their description", async () => {
+    show(<HealthyBandsCard />);
+    const row = (await screen.findByText("Prime cost")).closest("li")!;
+    expect(row.className).toContain("flex-col");
+    const low = screen.getByLabelText("Prime cost low");
+    expect(low.className).toContain("min-h-11");
+    expect(low.className).toContain("w-16");
+    expect(low.className).not.toContain("w-full");
   });
 
   it("will not save until something is actually changed", async () => {

@@ -9,7 +9,12 @@ The invariant locked in here is: whatever gets dropped on an upload button,
 the server either explains the problem or reports that nothing was imported -
 it never crashes, and it never quietly creates records out of garbage.
 """
+import io
+import re
+import zipfile
+
 import pytest
+from openpyxl import Workbook
 
 # The shapes a user actually drops on an upload button by mistake.
 GARBAGE = [
@@ -38,6 +43,35 @@ def assert_handled(response):
         assert body.get("created", 0) == 0, response.text
         assert body.get("rows_ok", 0) == 0 or body.get("new_rows", 0) == 0, \
             response.text
+
+
+def dimensionless_workbook() -> bytes:
+    """A technically zip-valid xlsx with the worksheet dimension stripped."""
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Date", "Category", "Amount"])
+    sheet.append(["2026-09-01", "Food", 500])
+    source = io.BytesIO()
+    book.save(source)
+    repaired = io.BytesIO()
+    with zipfile.ZipFile(source) as archive, zipfile.ZipFile(
+            repaired, "w", zipfile.ZIP_DEFLATED) as output:
+        for member in archive.infolist():
+            content = archive.read(member.filename)
+            if member.filename == "xl/worksheets/sheet1.xml":
+                content = re.sub(br"<dimension[^>]*/>", b"", content)
+            output.writestr(member, content)
+    return repaired.getvalue()
+
+
+def test_generic_import_explains_a_dimensionless_workbook(client, outlet_id):
+    response = client.post(
+        f"/api/data/import/expenses?outlet_id={outlet_id}",
+        files={"file": ("broken.xlsx", dimensionless_workbook(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 422, response.text
+    assert "unreadable worksheet structure" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("label,payload", GARBAGE, ids=IDS)

@@ -1,14 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { ArrowRight, Calculator, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useAuth, useGuarded } from "../lib/auth";
 import { explainedBySplit } from "../lib/cashdoubt";
 import { ExportButton } from "../components/DataButtons";
 import { fmtDateShort, inr, moneyCfg, todayISO } from "../lib/format";
 import { useDateParam } from "../lib/useDateParam";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import {
-  Badge, Button, Card, ErrorNote, Field, Input, SectionLabel, Sheet, Spinner,
+  Badge, Button, Card, ConfirmSheet, ErrorNote, Field, Input, SectionLabel, Sheet, Spinner,
   StatTile,
 } from "../components/ui";
 
@@ -29,6 +31,18 @@ export default function CashRegister() {
     queryFn: () => api.get(`/cash/closures?outlet_id=${outletId}&limit=30`),
   });
 
+  if (day.isLoading) return <Spinner />;
+  if (day.isError || !day.data) {
+    return (
+      <div className="space-y-3">
+        <ErrorNote msg="Couldn't load this cash day. Check your connection and retry." />
+        <Button variant="outline" disabled={day.isFetching} onClick={() => void day.refetch()}>
+          {day.isFetching ? "Retrying cash day…" : "Retry cash day"}
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-2">
@@ -36,13 +50,13 @@ export default function CashRegister() {
           <SectionLabel>Money · Cash register</SectionLabel>
           <h1 className="text-2xl font-semibold tracking-tight">{fmtDateShort(date)}</h1>
         </div>
-        <input type="date" value={date} max={todayISO()}
-               onChange={(e) => setDate(e.target.value)}
-               className="rounded-md border border-rule-strong bg-paper px-3 py-1.5 num text-sm" />
+        <Input type="date" size="compact" value={date} max={todayISO()}
+               aria-label="Show the cash register for this date"
+               onChange={(e) => setDate(e.target.value)} className="!w-auto" />
         <ExportButton entity="closures" params={{ outlet_id: outletId }} />
       </header>
 
-      {day.isLoading ? <Spinner /> : day.data && (
+      {(
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
             <StatTile label="Opening float" value={inr(day.data.opening_paise)} sub={day.data.opening_source} />
@@ -107,22 +121,36 @@ export default function CashRegister() {
 
       <Card>
         <div className="border-b border-rule px-4 py-2.5"><SectionLabel>Recent days</SectionLabel></div>
+        {history.isError ? (
+          <div className="space-y-2 px-4 py-3">
+            <ErrorNote msg="Couldn't load recent cash closures." />
+            <Button size="sm" variant="outline" disabled={history.isFetching}
+                    onClick={() => void history.refetch()}>
+              {history.isFetching ? "Retrying closures…" : "Retry recent days"}
+            </Button>
+          </div>
+        ) : (
         <div className="divide-y divide-rule">
           {(history.data?.rows ?? []).map((c: any) => {
             const bad = Math.abs(c.variance_paise) > history.data.alert_paise;
             return (
-              <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                <span className="w-24 shrink-0 text-ink-soft">{fmtDateShort(c.date)}</span>
-                <span className="num w-28">{inr(c.counted_paise)}</span>
-                <span className={`num w-24 font-medium ${c.variance_paise === 0 ? "text-good" : bad ? "text-bad" : "text-ink"}`}>
-                  {inr(c.variance_paise, { sign: true })}
-                </span>
-                <span className="num hidden w-28 text-ink-soft sm:inline">
-                  home {inr(c.taken_home_paise)}
-                  {c.left_in_drawer_paise > 0 && ` · left ${inr(c.left_in_drawer_paise)}`}
-                </span>
-                {c.reopened && <Badge tone="warn">reopened</Badge>}
-                <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">{c.note}</span>
+              <div key={c.id} className="px-4 py-2.5 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{fmtDateShort(c.date)}</span>
+                  {c.reopened && <Badge tone="warn">reopened</Badge>}
+                  {c.note && <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">{c.note}</span>}
+                </div>
+                {/* Every figure carries its own label on both widths: a bare
+                    column of rupees here cannot say whether it was counted,
+                    carried home, or left behind. */}
+                <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-4">
+                  <ClosureFigure label="Counted" value={inr(c.counted_paise)} />
+                  <ClosureFigure label="Taken home" value={inr(c.taken_home_paise)} />
+                  <ClosureFigure label="Left in drawer" value={inr(c.left_in_drawer_paise)} />
+                  <ClosureFigure label="Variance" value={inr(c.variance_paise, { sign: true })}
+                                 valueClass={c.variance_paise === 0 ? "text-good"
+                                   : bad ? "text-bad" : "text-ink"} />
+                </dl>
               </div>
             );
           })}
@@ -130,12 +158,24 @@ export default function CashRegister() {
             <div className="px-4 py-6 text-center text-sm text-ink-faint">No closed days yet.</div>
           )}
         </div>
+        )}
       </Card>
     </div>
   );
 }
 
 const DENOMS_FALLBACK = [500, 200, 100, 50, 20, 10, 5, 2, 1];
+
+function ClosureFigure({ label, value, valueClass }: {
+  label: string; value: string; valueClass?: string;
+}) {
+  return (
+    <div>
+      <dt className="label-caps">{label}</dt>
+      <dd className={`num mt-0.5 font-medium ${valueClass ?? ""}`}>{value}</dd>
+    </div>
+  );
+}
 
 function ClosedCard({ closure, date, onReopened }: {
   closure: any; date: string; onReopened: () => void;
@@ -144,10 +184,14 @@ function ClosedCard({ closure, date, onReopened }: {
   const guarded = useGuarded();
   const reopen = useMutation({
     mutationFn: () => guarded(() => api.post(`/cash/${closure.id}/reopen`)),
-    onSuccess: onReopened,
+    onSuccess: () => {
+      setConfirming(false);
+      onReopened();
+    },
   });
   const isToday = closure.date === todayISO();
   const canAsk = me?.role === "owner" || isToday;
+  const [confirming, setConfirming] = useState(false);
   return (
     <div className="flex flex-col items-end gap-2">
       <Badge tone="good">
@@ -156,18 +200,22 @@ function ClosedCard({ closure, date, onReopened }: {
       </Badge>
       {canAsk && (
         <Button variant="outline" size="sm" disabled={reopen.isPending}
-                onClick={() => {
-                  // A closed day is a signed-off cash count. One stray tap
-                  // should not quietly undo it.
-                  if (window.confirm(
-                    "Reopen this day and recount the drawer?\n\n"
-                    + "The count you saved will be set aside until you close "
-                    + "the day again.")) reopen.mutate();
-                }}>
+                onClick={() => setConfirming(true)}>
           Reopen &amp; recount
           {!isToday && me?.role === "owner" ? " (password)" : ""}
         </Button>
       )}
+      <ConfirmSheet
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => reopen.mutate()}
+        title="Reopen this day?"
+        description={"Reopen this day and recount the drawer?\n\n"
+          + "The count you saved will be set aside until you close the day again."}
+        confirmLabel="Reopen & recount"
+        pending={reopen.isPending}
+        pendingLabel="Reopening…"
+      />
       <ErrorNote msg={reopen.error?.message ?? ""} />
     </div>
   );
@@ -187,30 +235,33 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
   };
   const [open, setOpen] = useState(false);
   const [calcOpen, setCalcOpen] = useState(false);
-  const [denoms, setDenoms] = useState<Record<number, string>>({});
+  // A reopened day starts from the count that was set aside, so "unchanged"
+  // means the saved count, not an empty drawer.
+  const pristine = useMemo(() => ({
+    counted: prior ? String(Math.round(prior.counted_paise) / 100) : "",
+    takenHome: prior ? String(Math.round(prior.taken_home_paise) / 100) : "",
+    note: prior?.note ?? "",
+    denoms: Object.fromEntries(
+      Object.entries(prior?.counted_breakdown ?? {}).map(([d, q]) => [Number(d), String(q)]),
+    ) as Record<number, string>,
+  }), [prior]);
+  const [denoms, setDenoms] = useState<Record<number, string>>(pristine.denoms);
   const [counted, setCounted] = useState<string | null>(null);
   const [takenHome, setTakenHome] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const guarded = useGuarded();
 
-  // prefill when recounting a reopened day
-  useEffect(() => {
-    if (open && prior) {
-      setCounted(String(Math.round(prior.counted_paise) / 100));
-      setTakenHome(String(Math.round(prior.taken_home_paise) / 100));
-      setNote(prior.note ?? "");
-      if (prior.counted_breakdown) {
-        const b: Record<number, string> = {};
-        Object.entries(prior.counted_breakdown).forEach(([k, v]) => {
-          b[Number(k)] = String(v);
-        });
-        setDenoms(b);
-        setCalcOpen(true);
-      }
-    }
-    if (!open) { setCounted(null); setTakenHome(null); setNote(null); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  const openSheet = () => {
+    setCounted(pristine.counted); setTakenHome(pristine.takenHome);
+    setNote(pristine.note); setDenoms(pristine.denoms);
+    if (prior?.counted_breakdown) setCalcOpen(true);
+    setOpen(true);
+  };
+  const closeSheet = () => {
+    setCounted(null); setTakenHome(null); setNote(null);
+    setDenoms(pristine.denoms);
+    setOpen(false);
+  };
 
   const denomsList: number[] = (moneyCfg.denominations?.length
     ? moneyCfg.denominations : DENOMS_FALLBACK);
@@ -218,12 +269,28 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
     (s, d) => s + (Number(denoms[d]) || 0) * d * 100, 0);
 
   const shownCounted = counted ?? "";
+  const takenHomeInput = takenHome ?? "";
+  const countedValue = Number(shownCounted);
+  const takenHomeValue = Number(takenHomeInput);
+  const countedValid = shownCounted.trim() !== ""
+    && Number.isFinite(countedValue) && countedValue >= 0;
+  const takenHomeValid = takenHomeInput.trim() === ""
+    || (Number.isFinite(takenHomeValue) && takenHomeValue >= 0);
+  const takenHomeWithinCount = countedValid && takenHomeValid
+    && (takenHomeInput.trim() === "" || takenHomeValue <= countedValue);
+  const closeValidationError = shownCounted.trim() !== "" && !countedValid
+    ? "Counted cash must be a finite amount of ₹0 or more."
+    : takenHomeInput.trim() !== "" && !takenHomeValid
+      ? "Cash taken home must be a finite amount of ₹0 or more."
+      : countedValid && takenHomeValid && !takenHomeWithinCount
+        ? "Cash taken home cannot exceed the counted cash."
+        : "";
   const close = useMutation({
     mutationFn: () => guarded(() => api.post("/cash/close", {
       outlet_id: outletId,
       date,
-      counted_rupees: Number(shownCounted),
-      taken_home_rupees: Number(takenHome ?? "0") || 0,
+      counted_rupees: countedValue,
+      taken_home_rupees: takenHomeInput.trim() === "" ? 0 : takenHomeValue,
       breakdown: calcTotalPaise > 0
         ? Object.fromEntries(Object.entries(denoms).filter(([, q]) => Number(q) > 0))
         : undefined,
@@ -234,27 +301,34 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
       setCounted(null); setTakenHome(null); onDone();
     },
   });
+  const draft = useDirtyDraft({
+    open, label: "cash count",
+    values: { counted: shownCounted, takenHome: takenHomeInput, note: note ?? "", denoms },
+    pristine: pristine,
+    discard: closeSheet,
+  });
 
   if (!open)
     return (
-      <Button size="lg" onClick={() => setOpen(true)}>
+      <Button size="lg" onClick={openSheet}>
         {prior ? "Recount & re-close" : "Count & close the day"}
       </Button>
     );
 
-  const countedP = Math.round((Number(shownCounted) || 0) * 100);
+  const countedP = countedValid ? Math.round(countedValue * 100) : 0;
   const variance = countedP - expectedPaise;
   // Part-paid bills hide an unknown amount of cash sales, so the drawer
   // counting high by up to that much is arithmetic, not a discrepancy.
   // Only a surplus is explained: a shortage still needs chasing.
   const splitUnknownPaise = dayData.split_unknown_paise ?? 0;
   const splitExplains = explainedBySplit(variance, splitUnknownPaise);
-  const takenP = Math.round((Number(takenHome ?? "0") || 0) * 100);
+  const takenP = takenHomeValid && takenHomeInput.trim() !== ""
+    ? Math.round(takenHomeValue * 100) : 0;
   const leftP = countedP - takenP;
-  const reasonNeeded = variance !== 0;
+  const reasonNeeded = countedValid && variance !== 0;
 
   return (
-    <Sheet open onClose={() => setOpen(false)} title="Close the day" wide>
+    <Sheet open onClose={draft.close} title="Close the day" wide>
       <div className="space-y-4">
         {/* The math, transparent */}
         <Card className="bg-paper-3/50 px-4 py-3">
@@ -282,7 +356,7 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
             <Input inputMode="decimal" placeholder="₹ counted" value={shownCounted}
                    onChange={(e) => setCounted(e.target.value)} className="text-right text-xl" />
             <Button variant="outline" onClick={() => setCalcOpen(!calcOpen)}>
-              Notes 🧮
+              <Calculator size={15} /> Note calculator
             </Button>
           </div>
         </Field>
@@ -294,11 +368,12 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
               {denomsList.map((d) => (
                 <div key={d} className="flex items-center gap-1.5">
                   <span className="num w-12 text-right text-xs text-ink-faint">₹{d}</span>
-                  <span className="text-ink-faint">×</span>
-                  <Input inputMode="numeric" placeholder="0"
+                  <X size={12} aria-hidden="true" className="shrink-0 text-ink-faint" />
+                  <Input size="compact" inputMode="numeric" placeholder="0"
+                         aria-label={`Number of ${moneyCfg.symbol}${d} notes or coins counted`}
                          value={denoms[d] ?? ""}
                          onChange={(e) => setDenoms((x) => ({ ...x, [d]: e.target.value }))}
-                         className="!py-1.5 text-center num" />
+                         className="text-center" />
                 </div>
               ))}
             </div>
@@ -317,7 +392,7 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
         )}
 
         {/* Variance verdict */}
-        {shownCounted !== "" && (
+        {countedValid && (
           <Card className={`px-4 py-3 ${
             variance === 0 ? "bg-good/10"
               : splitExplains ? ""
@@ -351,33 +426,35 @@ function CountSheet({ outletId, date, dayData, alertPaise, prior, onDone }: {
                    onChange={(e) => setTakenHome(e.target.value)}
                    className="text-right" />
             <Button variant="outline"
-                    disabled={countedP <= 0}
+                    disabled={!countedValid}
                     onClick={() => setTakenHome(String(countedP / 100))}>
               Take all ₹{countedP / 100}
             </Button>
           </div>
         </Field>
-        {takenHome !== "" && shownCounted !== "" && (
+        {takenHomeInput !== "" && takenHomeWithinCount && (
           <Card className="px-4 py-2.5 text-sm">
-            Left in drawer → tomorrow's opening:
+            <span className="inline-flex items-center gap-1">Left in drawer <ArrowRight size={14} aria-hidden="true" /> tomorrow's opening:</span>
             <span className="num ml-1 font-semibold">{inr(leftP)}</span>
           </Card>
         )}
 
         {/* Reason gate */}
         {reasonNeeded && (
-          <Field label="Why doesn't the count match?" hint="Required — the day cannot close without a reason.">
-            <Input value={note ?? ""} onChange={(e) => setNote(e.target.value)}
+          <Field label="Variance reason (required)" hint="The day cannot close without explaining a non-zero variance.">
+            <Input value={note ?? ""} required
+                   aria-invalid={!(note ?? "").trim()}
+                   onChange={(e) => setNote(e.target.value)}
                    placeholder="e.g., ₹200 chit pending with Ramesh" />
           </Field>
         )}
 
-        <ErrorNote msg={
-          close.error?.message ?? (reasonNeeded && !(note ?? "").trim()
+        <ErrorNote msg={(close.error?.message ?? closeValidationError)
+          || (reasonNeeded && !(note ?? "").trim()
             ? "Variance must be explained before closing." : "")} />
 
         <Button size="lg" className="w-full"
-                disabled={shownCounted === "" || close.isPending ||
+                disabled={!countedValid || !takenHomeValid || !takenHomeWithinCount || close.isPending ||
                           (reasonNeeded && !(note ?? "").trim())}
                 onClick={() => close.mutate()}>
           Close {date}

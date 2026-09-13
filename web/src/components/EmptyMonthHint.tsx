@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { monthLabel } from "../lib/format";
+import { Button } from "./ui";
 
 /**
  * An all-zero month reads as "my data is gone" when the real cause is simply
@@ -29,10 +30,10 @@ export function EmptyMonthHint({ month, outletId, onJump, what = "recorded" }: {
         <span className="font-medium text-ink">{monthLabel(last)}</span>.
       </span>
       {onJump && (
-        <button onClick={() => onJump(last)}
-                className="ml-2 font-medium text-accent underline underline-offset-2">
+        <Button variant="ghost" size="sm" onClick={() => onJump(last)}
+                className="ml-2 text-accent underline underline-offset-2">
           View {monthLabel(last)} →
-        </button>
+        </Button>
       )}
     </div>
   );

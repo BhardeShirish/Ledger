@@ -1,9 +1,9 @@
 """Daily sales sheet: manual channel rows merged with imported rollups."""
 import math
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,24 +23,52 @@ CHANNEL_KINDS = {
 
 @router.get("/bills")
 def bills(outlet_id: int, business_date: str | None = None,
-          limit: int = 1000,
+          kind: str | None = None, q: str | None = None,
+          page: int = Query(1, ge=1),
+          per_page: int = Query(100, ge=1, le=500),
           user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Bill-level history (from Petpooja imports), newest first."""
+    """Bill-level history (from Petpooja imports), newest first.
+
+    Filtering, search and paging happen in SQL: a busy outlet has tens of
+    thousands of bills, and sending them all so the browser could hide most
+    of them was the slow part of this screen.
+    """
     assert_outlet_access(db, user, outlet_id)
-    q = db.query(SalesBill).filter_by(outlet_id=outlet_id)
+    rows_q = db.query(SalesBill).filter_by(outlet_id=outlet_id)
     if business_date:
-        q = q.filter(SalesBill.business_date == business_date)
-    rows = (q.order_by(SalesBill.bill_ts.desc())
-              .limit(min(limit, 5000)).all())
-    return [{
-        "id": b.id, "business_date": b.business_date,
-        "invoice_no": b.invoice_no, "bill_ts": b.bill_ts,
-        "order_type": b.order_type, "area": b.area, "persons": b.persons,
-        "channel_kind": b.channel_kind,
-        "net_paise": b.net_paise, "total_paise": b.total_paise,
-        "discount_paise": b.discount_paise, "tip_paise": b.tip_paise,
-        "tax_paise": b.tax_paise,
-    } for b in rows]
+        validate_business_date(business_date)
+        rows_q = rows_q.filter(SalesBill.business_date == business_date)
+    if kind:
+        if kind not in CHANNEL_KINDS:
+            raise HTTPException(422, "Unknown payment mode filter")
+        rows_q = rows_q.filter(SalesBill.channel_kind == kind)
+    term = (q or "").strip()[:60]
+    if term:
+        # autoescape keeps a typed % or _ a literal, not a wildcard scan.
+        needle = term.lower()
+        rows_q = rows_q.filter(or_(
+            func.lower(SalesBill.invoice_no).contains(needle, autoescape=True),
+            func.lower(SalesBill.area).contains(needle, autoescape=True),
+        ))
+    total = rows_q.count()
+    rows = (rows_q
+            # id breaks bill_ts ties, without which a row can repeat or vanish
+            # across pages.
+            .order_by(SalesBill.bill_ts.desc(), SalesBill.id.desc())
+            .offset((page - 1) * per_page).limit(per_page).all())
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "rows": [{
+            "id": b.id, "business_date": b.business_date,
+            "invoice_no": b.invoice_no, "bill_ts": b.bill_ts,
+            "order_type": b.order_type, "area": b.area, "persons": b.persons,
+            "channel_kind": b.channel_kind,
+            "net_paise": b.net_paise, "total_paise": b.total_paise,
+            "total_rupees": round(b.total_paise / 100, 2),
+            "discount_paise": b.discount_paise, "tip_paise": b.tip_paise,
+            "tax_paise": b.tax_paise,
+        } for b in rows],
+    }
 
 
 class ManualIn(BaseModel):

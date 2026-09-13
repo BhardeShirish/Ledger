@@ -83,7 +83,21 @@ export default function InventoryOrder() {
 
       {q.isLoading && <Spinner label="Checking recorded inventory evidence…" />}
       {q.isError && <ErrorNote msg={(q.error as Error).message} />}
-      {!q.isLoading && !q.isError && (
+      {!q.isLoading && !q.isError && rows.length === 0 && (
+        <Card className="overflow-hidden">
+          <EmptyState
+            title="No stock items yet"
+            hint="Nothing is tracked for this outlet, so there is no evidence to judge and nothing to reorder. This is not an all-clear."
+            action={
+              <Link to="/inventory/items"
+                    className="mt-2 inline-flex min-h-11 items-center justify-center rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90">
+                Add stock item
+              </Link>
+            }
+          />
+        </Card>
+      )}
+      {!q.isLoading && !q.isError && rows.length > 0 && (
         <>
           <Card className="overflow-hidden">
             <div className="border-b border-rule px-4 py-3">

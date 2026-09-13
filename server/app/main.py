@@ -14,7 +14,7 @@ from sqlalchemy import text  # noqa: E402
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from .config import DATA_DIR, ensure_dirs  # noqa: E402
-from .backup import run_daily_backup  # noqa: E402
+from .backup import run_daily_backup, run_recovery_backup  # noqa: E402
 from .db import Base, SessionLocal, engine  # noqa: E402
 from .models import migrate  # noqa: E402
 from .routers import (advances, admin, advisor, attendance, auth, bank, control, dataio,
@@ -74,9 +74,14 @@ async def _backup_keeper():
     """Snapshot on every start, then keep checking so a laptop that stays on
     for weeks still gets a copy each day."""
     while True:
-        made = await asyncio.to_thread(run_daily_backup)
-        if made:
-            print(f"[ledger] daily backup written: {made}")
+        daily, recovery = await asyncio.gather(
+            asyncio.to_thread(run_daily_backup),
+            asyncio.to_thread(run_recovery_backup),
+        )
+        if daily:
+            print(f"[ledger] daily database backup written: {daily}")
+        if recovery:
+            print(f"[ledger] full recovery backup written: {recovery}")
         await asyncio.sleep(6 * 60 * 60)
 
 

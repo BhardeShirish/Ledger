@@ -1,12 +1,13 @@
 import React, { lazy, Suspense } from "react";
 import {
   createBrowserRouter, createRoutesFromElements, Link, Navigate, Route,
-  RouterProvider, useParams, useRouteError,
+  Outlet, RouterProvider, useOutletContext, useParams, useRouteError,
 } from "react-router-dom";
 import Layout from "./components/Layout";
 import AppErrorBoundary from "./components/AppErrorBoundary";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { MoneyProvider } from "./lib/money";
+import { Spinner } from "./components/ui";
 const Advances = lazy(() => import("./pages/Advances"));
 const AttendanceGrid = lazy(() => import("./pages/AttendanceGrid"));
 const Bills = lazy(() => import("./pages/Bills"));
@@ -40,9 +41,25 @@ const PayrollRunDetail = lazy(() => import("./pages/PayrollRunDetail"));
 
 function Protected() {
   const { me, ready } = useAuth();
-  if (!ready) return <div className="p-10 text-center text-ink-faint">…</div>;
+  if (!ready) return <Spinner />;
   if (!me) return <Navigate to="/login" replace />;
   return <Layout />;
+}
+
+export function RequireOwner() {
+  const { me } = useAuth();
+  const outletContext = useOutletContext();
+  if (me?.role === "owner") return <Outlet context={outletContext} />;
+  return (
+    <section role="alert" aria-labelledby="owner-access-heading"
+             className="mx-auto max-w-md py-14 text-center">
+      <h1 id="owner-access-heading" className="text-2xl font-semibold">Owner access required</h1>
+      <p className="mt-2 text-sm text-ink-faint">
+        This area is available only to the restaurant owner.
+      </p>
+      <Link to="/" className="mt-4 inline-block text-accent underline">Return home</Link>
+    </section>
+  );
 }
 
 function RedirectOldPayroll() {
@@ -74,7 +91,6 @@ const router = createBrowserRouter(
         <Route path="/" element={<Home />} />
         <Route path="/sales" element={<SalesSheet />} />
         <Route path="/sales/bills" element={<Bills />} />
-        <Route path="/sales/import" element={<ImportWizard />} />
         <Route path="/staff/attendance" element={<AttendanceGrid />} />
         <Route path="/staff/people" element={<PeopleList />} />
         <Route path="/staff/people/:id" element={<PersonDetail />} />
@@ -85,7 +101,6 @@ const router = createBrowserRouter(
         <Route path="/money/vendors/:id" element={<VendorDetail />} />
         <Route path="/money/cash" element={<CashRegister />} />
         <Route path="/money/unitprices" element={<UnitPrices />} />
-        <Route path="/money/bank" element={<BankImport />} />
         <Route path="/inventory" element={<InventoryLayout />}>
           <Route index element={<InventoryOverview />} />
           <Route path="items" element={<InventoryItems />} />
@@ -95,12 +110,17 @@ const router = createBrowserRouter(
           <Route path="order" element={<InventoryOrder />} />
         </Route>
         <Route path="/brief" element={<DailyBrief />} />
-        <Route path="/staff/payroll" element={<PayrollRuns />} />
-        <Route path="/staff/payroll/:id" element={<PayrollRunDetail />} />
-        <Route path="/staff/advances" element={<Advances />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/reports/analytics" element={<Analytics />} />
-        <Route path="/settings/*" element={<SettingsPage />} />
+        <Route path="/settings/account" element={<SettingsPage />} />
+        <Route element={<RequireOwner />}>
+          <Route path="/sales/import" element={<ImportWizard />} />
+          <Route path="/money/bank" element={<BankImport />} />
+          <Route path="/staff/payroll" element={<PayrollRuns />} />
+          <Route path="/staff/payroll/:id" element={<PayrollRunDetail />} />
+          <Route path="/staff/advances" element={<Advances />} />
+          <Route path="/settings/*" element={<SettingsPage />} />
+        </Route>
         {/* Inside Protected so a mistyped URL keeps the sidebar and reads
             as "wrong address", not "the app broke". */}
         <Route path="*" element={<NotFound />} />
@@ -116,7 +136,7 @@ export default function App() {
     <MoneyProvider>
       <AuthProvider>
         <AppErrorBoundary>
-          <Suspense fallback={<div className="p-10 text-center text-ink-faint">Loading…</div>}>
+          <Suspense fallback={<Spinner />}>
             <RouterProvider router={router} future={{ v7_startTransition: true }} />
           </Suspense>
         </AppErrorBoundary>

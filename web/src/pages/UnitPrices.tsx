@@ -59,6 +59,7 @@ export default function UnitPrices() {
       </header>
 
       <Input placeholder="Filter item…" value={filter}
+             aria-label="Filter items by name"
              onChange={(e) => setFilter(e.target.value)} className="max-w-xs" />
 
       {rows.length === 0 && (
@@ -85,7 +86,7 @@ export default function UnitPrices() {
                 avg {inr(Math.round(it.avg_unit_price * 100))}/{it.unit || "u"} · {it.purchases_count} buys
               </span>
             </div>
-            <table className="w-full text-sm">
+            <table className="hidden w-full text-sm sm:table">
               <thead>
                 <tr className="border-b border-rule text-left text-xs text-ink-faint">
                   <th className="px-4 py-1.5 font-medium">Date</th>
@@ -116,6 +117,32 @@ export default function UnitPrices() {
                 })}
               </tbody>
             </table>
+
+            {/* Below sm the five columns collapse into unreadable slivers, so
+                each purchase becomes a two-line card instead: who and when on
+                top, what it cost underneath. */}
+            <ul className="divide-y divide-rule/50 sm:hidden">
+              {it.purchases.map((p: any, i: number) => {
+                const cheapest = p.unit_price_rupees === it.cheapest_unit_price;
+                return (
+                  <li key={i} className="px-4 py-2.5 text-sm">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-ink-soft">{fmtDateShort(p.date)}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{p.vendor || "—"}</span>
+                      {cheapest && <Badge tone="good">cheapest</Badge>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-ink-faint">
+                      <span className="num">{p.qty} {p.unit}</span>
+                      <span className="num">total {inr(Math.round(p.total_rupees * 100))}</span>
+                      <span className={`num ml-auto text-sm font-semibold ${
+                        cheapest ? "text-good" : "text-ink"}`}>
+                        {inr(Math.round(p.unit_price_rupees * 100))}/{it.unit || "u"}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           </Card>
         ))}
       </div>

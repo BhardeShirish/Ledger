@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+import { FileUp } from "lucide-react";
 import { api } from "../api/client";
 import { fmtDateShort, inr, minToHHMM, todayISO } from "../lib/format";
 import { ExportButton } from "../components/DataButtons";
 import {
   Badge, Button, Card, EmptyState, ErrorNote, Field, Input, SectionLabel,
-  Sheet, Spinner,
+  Select, Sheet, Spinner,
 } from "../components/ui";
 
 const KIND_LABEL: Record<string, string> = {
@@ -14,17 +15,31 @@ const KIND_LABEL: Record<string, string> = {
   due: "Credit due", wallet: "Wallet", aggregator: "Delivery app", other: "Other",
 };
 const ALLOC_CHANNELS = ["cash", "upi", "card"];
+const PER_PAGE = 100;
 
 export default function Bills() {
   const { outletId } = useOutletContext<{ outletId: number }>();
   const [date, setDate] = useState("");
   const [kind, setKind] = useState("");
+  // Typed text stays local; only a submitted search reaches the server. This
+  // app has no debounce helper, and a request per keystroke is worse.
+  const [search, setSearch] = useState("");
   const [qText, setQText] = useState("");
+  const [page, setPage] = useState(1);
   const [allocating, setAllocating] = useState<any>(null);
 
   const q = useQuery({
-    queryKey: ["bills", outletId, date],
-    queryFn: () => api.get(`/sales/bills?outlet_id=${outletId}${date ? `&business_date=${date}` : ""}`),
+    queryKey: ["bills", outletId, date, kind, qText, page],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        outlet_id: String(outletId), page: String(page),
+        per_page: String(PER_PAGE),
+      });
+      if (date) params.set("business_date", date);
+      if (kind) params.set("kind", kind);
+      if (qText) params.set("q", qText);
+      return api.get(`/sales/bills?${params.toString()}`);
+    },
     placeholderData: (prev) => prev,
   });
   const splits = useQuery({
@@ -33,13 +48,28 @@ export default function Bills() {
   });
 
   if (q.isLoading) return <Spinner />;
-  let rows: any[] = q.data ?? [];
-  if (kind) rows = rows.filter((b) => b.channel_kind === kind);
-  if (qText) {
-    const t = qText.toLowerCase();
-    rows = rows.filter((b) =>
-      String(b.invoice_no).includes(t) || b.area?.toLowerCase().includes(t));
+  if (q.isError) {
+    return (
+      <div className="space-y-3">
+        <ErrorNote msg="Couldn't load bills. Check your connection and retry." />
+        <Button variant="outline" disabled={q.isFetching} onClick={() => void q.refetch()}>
+          {q.isFetching ? "Retrying bills…" : "Retry bills"}
+        </Button>
+      </div>
+    );
   }
+  const rows: any[] = Array.isArray(q.data?.rows) ? q.data.rows : [];
+  const total: number = Number.isSafeInteger(q.data?.total) && q.data.total >= 0
+    ? q.data.total : rows.length;
+  // The server owns the page size, so the counter cannot drift from the rows.
+  const perPage: number = Number.isSafeInteger(q.data?.per_page) && q.data.per_page > 0
+    ? q.data.per_page : PER_PAGE;
+  const filtered = !!(date || kind || qText);
+  const firstShown = rows.length === 0 ? 0 : (page - 1) * perPage + 1;
+  const lastShown = (page - 1) * perPage + rows.length;
+  const hasNext = lastShown < total;
+  /** Any filter change invalidates the page the user was standing on. */
+  const refilter = (apply: () => void) => { apply(); setPage(1); };
 
   return (
     <div className="space-y-4">
@@ -49,13 +79,17 @@ export default function Bills() {
           <h1 className="text-2xl font-semibold tracking-tight">Every bill, searchable</h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                 className="rounded-md border border-rule-strong bg-paper px-2.5 py-1.5 num text-sm" />
-          <select value={kind} onChange={(e) => setKind(e.target.value)}
-                  className="rounded-md border border-rule-strong bg-paper px-2 py-1.5 text-sm">
+          <Input type="date" size="compact" value={date}
+                 aria-label="Show bills for this date"
+                 onChange={(e) => refilter(() => setDate(e.target.value))}
+                 className="!w-auto" />
+          <Select size="compact" value={kind}
+                  aria-label="Filter bills by payment mode"
+                  onChange={(e) => refilter(() => setKind(e.target.value))}
+                  className="!w-auto">
             <option value="">All modes</option>
             {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          </Select>
         </div>
       </header>
 
@@ -75,20 +109,50 @@ export default function Bills() {
           </div>
         </Card>
       )}
+      {splits.isError && (
+        <div className="flex flex-wrap items-center gap-2">
+          <ErrorNote msg="Couldn't check for unresolved split bills." />
+          <Button size="sm" variant="outline" disabled={splits.isFetching}
+                  onClick={() => void splits.refetch()}>
+            {splits.isFetching ? "Retrying splits…" : "Retry split check"}
+          </Button>
+        </div>
+      )}
 
-      <Input placeholder="Search invoice no…" value={qText}
-             onChange={(e) => setQText(e.target.value)} />
+      <form className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => { e.preventDefault(); refilter(() => setQText(search.trim())); }}>
+        <Input placeholder="Search invoice no or area…" value={search}
+               fullWidth={false}
+               aria-label="Search bills by invoice number or area"
+               onChange={(e) => setSearch(e.target.value)}
+               className="min-w-0 flex-1" />
+        <Button type="submit" variant="outline">Search</Button>
+        {qText && (
+          <Button type="button" variant="ghost"
+                  onClick={() => refilter(() => { setSearch(""); setQText(""); })}>
+            Clear search
+          </Button>
+        )}
+      </form>
 
       <Card className="divide-y divide-rule">
-        {rows.length === 0 && (
+        {rows.length === 0 && (filtered ? (
+          <EmptyState title="No bills match these filters"
+                      hint="Try another date, payment mode, invoice number or area." />
+        ) : (
           <EmptyState title="No bills found"
-                      hint="Import a Petpooja Orders Master Report to fill history — every bill lands here." />
-        )}
-        {rows.slice(0, 300).map((b) => (
-          <button key={b.id}
-                  onClick={() => b.channel_kind === "split" && setAllocating(b)}
-                  className={`flex w-full items-center gap-3 px-4 py-2 text-left text-sm ${
-                    b.channel_kind === "split" ? "hover:bg-accent-soft/50" : ""}`}>
+                      hint="Import a Petpooja Orders Master Report to fill history — every bill lands here."
+                      action={
+                        <Link to="/sales/import"
+                              className="mt-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2">
+                          <FileUp size={15} aria-hidden="true" /> Import POS report
+                        </Link>
+                      } />
+        ))}
+        {rows.map((b) => {
+          const unresolvedSplit = b.channel_kind === "split";
+          const row = (
+            <>
             <span className="num w-16 shrink-0 text-ink-faint">#{b.invoice_no}</span>
             <span className="w-20 shrink-0 text-ink-soft">{fmtDateShort(b.business_date)}</span>
             <span className="w-12 shrink-0 num text-xs text-ink-faint">{minToHHMM(Number(b.bill_ts.slice(11, 13)) * 60 + Number(b.bill_ts.slice(14, 16)))}</span>
@@ -100,11 +164,41 @@ export default function Bills() {
               <span className="num text-xs text-accent">−{inr(b.discount_paise)}</span>
             )}
             <span className="num font-medium">{inr(b.total_paise)}</span>
-          </button>
-        ))}
+            {unresolvedSplit && <span className="text-xs font-semibold text-accent underline underline-offset-2">Resolve split</span>}
+            </>
+          );
+          return unresolvedSplit ? (
+            <button key={b.id} type="button"
+                    aria-label={`Resolve split for bill #${b.invoice_no}`}
+                    onClick={() => setAllocating(b)}
+                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-accent-soft/50">
+              {row}
+            </button>
+          ) : (
+            <div key={b.id} className="flex items-center gap-3 px-4 py-2 text-sm">{row}</div>
+          );
+        })}
       </Card>
-      {rows.length > 300 && (
-        <p className="text-center text-xs text-ink-faint">Showing the first 300 — narrow by date or mode.</p>
+      {(rows.length > 0 || page > 1) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-faint">
+          <span role="status">
+            {q.isFetching ? "Updating bills…"
+              : rows.length === 0 ? "This page is empty — go back a page."
+                : `Showing ${firstShown}–${lastShown} of ${total} bills`}
+          </span>
+          <span className="flex gap-2">
+            <Button size="sm" variant="outline" aria-label="Previous page of bills"
+                    disabled={page <= 1 || q.isFetching}
+                    onClick={() => setPage(page - 1)}>
+              <span aria-hidden="true">‹</span> Previous
+            </Button>
+            <Button size="sm" variant="outline" aria-label="Next page of bills"
+                    disabled={!hasNext || q.isFetching}
+                    onClick={() => setPage(page + 1)}>
+              Next <span aria-hidden="true">›</span>
+            </Button>
+          </span>
+        </div>
       )}
 
       <SplitAllocator bill={allocating} outletId={outletId}
@@ -121,15 +215,33 @@ function SplitAllocator({ bill, onClose, outletId }: any) {
   useEffect(() => {
     setAmounts({ cash: "", upi: "", card: "" });
   }, [bill?.id]);
-  const total = Object.values(amounts).reduce((s, v) => s + (Number(v) || 0), 0);
+  const enteredAllocations = Object.entries(amounts)
+    .filter(([, value]) => value.trim() !== "");
+  const invalidAllocation = enteredAllocations.some(([, value]) => {
+    const amount = Number(value);
+    return !Number.isFinite(amount) || amount <= 0;
+  });
+  const allocations = enteredAllocations
+    .filter(([, value]) => {
+      const amount = Number(value);
+      return Number.isFinite(amount) && amount > 0;
+    })
+    .map(([channel_kind, value]) => ({ channel_kind, amount_rupees: Number(value) }));
+  const total = allocations.reduce((sum, allocation) => sum + allocation.amount_rupees, 0);
   const target = Number(bill?.total_rupees ?? 0);
-  const balanced = Math.abs(total - target) < 0.005;
+  const balanced = !invalidAllocation && allocations.length >= 2
+    && Math.round(total * 100) === Math.round(target * 100);
+  const allocationError = invalidAllocation
+    ? "Each entered split amount must be a finite amount greater than ₹0."
+    : enteredAllocations.length > 0 && allocations.length < 2
+      ? "A split payment needs at least two payment methods."
+      : enteredAllocations.length > 0 && !balanced
+        ? `Split amounts must total exactly ${inr(Math.round(target * 100))}.`
+        : "";
 
   const save = useMutation({
     mutationFn: () => api.post(`/sales/bills/${bill.id}/allocate-split`, {
-      allocations: Object.entries(amounts)
-        .filter(([, v]) => Number(v) > 0)
-        .map(([k, v]) => ({ channel_kind: k, amount_rupees: Number(v) })),
+      allocations,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bills"] });
@@ -167,7 +279,7 @@ function SplitAllocator({ bill, onClose, outletId }: any) {
             </div>
           )}
         </Card>
-        <ErrorNote msg={save.error?.message ?? ""} />
+        <ErrorNote msg={save.error?.message ?? allocationError} />
         <Button size="lg" className="w-full" disabled={!balanced || save.isPending}
                 onClick={() => save.mutate()}>
           Allocate &amp; resolve

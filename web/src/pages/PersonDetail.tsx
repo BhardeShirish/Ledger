@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Camera, FileBadge, Pencil } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { DOW_LABELS, fmtDateShort, inr } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import {
   Badge, Button, Card, ErrorNote, Field, Input, SectionLabel, Select,
   Sheet, Spinner,
@@ -18,9 +19,37 @@ export default function PersonDetail() {
   const shifts = useQuery({ queryKey: ["shifts"], queryFn: () => api.get("/staff/shifts") });
 
   if (q.isLoading) return <Spinner />;
+  if (q.isError || !q.data) {
+    return (
+      <div className="space-y-3">
+        <ErrorNote msg="Couldn't load this staff member. Check your connection and retry." />
+        <Button variant="outline" disabled={q.isFetching} onClick={() => void q.refetch()}>
+          {q.isFetching ? "Retrying staff member…" : "Retry staff member"}
+        </Button>
+      </div>
+    );
+  }
   const e = q.data;
   const shiftName = (sid: number | null) =>
     sid == null ? "off" : shifts.data?.find((s: any) => s.id === sid)?.name ?? "—";
+
+  // What actually happens on a given weekday, and why — a bare "default"
+  // told nobody which shift that resolves to.
+  const effectiveDay = (dow: number): { label: string; source: string } => {
+    const p = e.pattern?.find((x: any) => x.dow === dow);
+    if (p) {
+      return p.shift_id == null
+        ? { label: "Off", source: "Set for this day" }
+        : { label: shiftName(p.shift_id), source: "Set for this day" };
+    }
+    if (e.off_dow === dow) return { label: "Off", source: "Weekly off" };
+    return e.default_shift_id != null
+      ? { label: shiftName(e.default_shift_id), source: "Default shift" }
+      : { label: "No shift set", source: "No default shift" };
+  };
+
+  const perDay = Math.round((e.per_day_rupees ?? 0) * 100);
+  const monthly = Math.round((e.monthly_salary_rupees ?? 0) * 100);
 
   return (
     <div className="space-y-4">
@@ -36,6 +65,15 @@ export default function PersonDetail() {
         </div>
         {me?.role === "owner" && <EditPerson emp={e} shifts={shifts.data ?? []} />}
       </header>
+      {shifts.isError && (
+        <div className="flex flex-wrap items-center gap-2">
+          <ErrorNote msg="Couldn't load shift names." />
+          <Button size="sm" variant="outline" disabled={shifts.isFetching}
+                  onClick={() => void shifts.refetch()}>
+            {shifts.isFetching ? "Retrying shifts…" : "Retry shifts"}
+          </Button>
+        </div>
+      )}
 
       <Card className="grid grid-cols-2 gap-x-6 gap-y-3 px-5 py-4 sm:grid-cols-3">
         <Fact label="Phone" value={e.phone || "—"} />
@@ -49,8 +87,11 @@ export default function PersonDetail() {
         <Fact label="Default shift" value={shiftName(e.default_shift_id)} />
         {me?.role === "owner" && (
           <>
-            <Fact label="Monthly salary" value={inr(Math.round((e.monthly_salary_rupees ?? 0) * 100))} />
-            <Fact label="Per-day rate" value={`${inr(Math.round((e.per_day_rupees ?? 0) * 100))} ÷${e.divisor}`} />
+            <Fact label="Monthly salary" value={inr(monthly)} />
+            <Fact label="Per-day rate" value={`${inr(perDay)} / day`}
+                  hint={monthly
+                    ? `${inr(monthly)} a month ÷ ${e.divisor} paid days`
+                    : `Monthly salary ÷ ${e.divisor} paid days`} />
           </>
         )}
       </Card>
@@ -58,19 +99,38 @@ export default function PersonDetail() {
       {/* Week pattern */}
       <Card className="px-4 py-4">
         <SectionLabel>Weekly shift pattern</SectionLabel>
+        <p className="mt-1 text-xs text-ink-faint">
+          What each day resolves to today — a day with nothing set falls back to the default shift.
+        </p>
         {me?.role !== "owner" && (
           <p className="mt-2 text-xs text-ink-faint">Patterns are set by the owner.</p>
         )}
-        <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
+        {/* Mobile reads all seven days down the page; sideways scrolling hid
+            the end of the week behind the card edge. */}
+        <ul className="mt-3 divide-y divide-rule sm:hidden">
           {DOW_LABELS.map((d, i) => {
-            const dow = i;
-            const p = e.pattern?.find((x: any) => x.dow === dow);
+            const { label, source } = effectiveDay(i);
             return (
-              <div key={d} className={`w-16 shrink-0 rounded-md border px-1 py-2 text-center text-xs ${
-                p && p.shift_id == null ? "border-rule bg-paper-3 text-ink-faint"
-                : p ? "border-rule-strong" : "border-dashed border-rule text-ink-faint"}`}>
+              <li key={d} className="flex items-baseline gap-3 py-2">
+                <span className="w-10 shrink-0 text-sm font-medium">{d}</span>
+                <span className="min-w-0 flex-1 text-sm">{label}</span>
+                <span className="shrink-0 text-xs text-ink-faint">{source}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="mt-3 hidden grid-cols-7 gap-1.5 sm:grid">
+          {DOW_LABELS.map((d, i) => {
+            const { label, source } = effectiveDay(i);
+            const set = e.pattern?.some((x: any) => x.dow === i);
+            return (
+              <div key={d} className={`min-w-0 rounded-md border px-1.5 py-2 text-center text-xs ${
+                label === "Off" ? "border-rule bg-paper-3 text-ink-soft"
+                : set ? "border-rule-strong" : "border-dashed border-rule"}`}>
                 <div className="font-medium">{d}</div>
-                <div className="mt-0.5 truncate">{p ? shiftName(p.shift_id) : "default"}</div>
+                <div className="mt-0.5 truncate" title={label}>{label}</div>
+                <div className={`mt-0.5 truncate text-[11px] ${
+                  label === "Off" ? "text-ink-soft" : "text-ink-faint"}`} title={source}>{source}</div>
               </div>
             );
           })}
@@ -95,8 +155,6 @@ function DocumentsCard({ emp }: { emp: any; personUrl?: string }) {
   const qc = useQueryClient();
   const [aadhaar, setAadhaar] = useState<string | null>(null);
   const [pan, setPan] = useState<string | null>(null);
-  const aFile = useRef<HTMLInputElement>(null);
-  const pFile = useRef<HTMLInputElement>(null);
 
   const saveNums = useMutation({
     mutationFn: (body: any) => api.patch(`/staff/employees/${emp.id}/kyc`, body),
@@ -111,70 +169,90 @@ function DocumentsCard({ emp }: { emp: any; personUrl?: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["person", String(emp.id)] }),
   });
 
-  const DocRow = ({ kind, label, numberVal, setNumberVal, path }: {
-    kind: "aadhaar" | "pan"; label: string;
-    numberVal: string | null; setNumberVal: (v: string | null) => void;
-    path: string | null;
-  }) => {
-    const savedNumber = kind === "aadhaar" ? emp.aadhaar_no : emp.pan_no;
-    const shown = numberVal ?? savedNumber ?? "";
-    const dirty = numberVal != null && numberVal !== savedNumber;
-    return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-4 py-3 last:border-0">
-        <FileBadge size={16} className="shrink-0 text-ink-faint" />
-        <span className="w-20 shrink-0 text-sm font-medium">{label}</span>
-        <input
-          placeholder={kind === "aadhaar" ? "XXXX XXXX XXXX" : "ABCDE1234F"}
-          value={shown}
-          onChange={(ev) => (kind === "aadhaar" ? setAadhaar : setPan)(ev.target.value)}
-          onBlur={() => {
-            const v = (numberVal ?? "").trim();
-            if (dirty) saveNums.mutate(kind === "aadhaar" ? { aadhaar_no: v } : { pan_no: v });
-          }}
-          className="num w-44 rounded-md border border-rule-strong bg-paper px-2 py-1.5 text-sm outline-none focus:border-accent"
-        />
-        {dirty && <Badge tone="warn">unsaved</Badge>}
-        <input ref={kind === "aadhaar" ? aFile : pFile} type="file" hidden accept="image/*,.pdf"
-               onChange={(ev) => {
-                 const f = ev.target.files?.[0];
-                 if (f) upload.mutate({ kind, f });
-               }} />
-        <Button size="sm" variant="ghost" onClick={() =>
-          (kind === "aadhaar" ? aFile : pFile).current?.click()}>
-          <Camera size={14} /> {path ? "Replace image" : "Attach image"}
-        </Button>
-        {upload.isPending && <span className="text-xs text-ink-faint">uploading…</span>}
-        {path && (
-          <a href={path} target="_blank" rel="noreferrer">
-            <img src={path} alt={`${label} document`}
-                 className="h-9 w-12 rounded border border-rule object-cover hover:border-accent" />
-          </a>
-        )}
-      </div>
-    );
-  };
-
   return (
     <Card className="overflow-hidden">
       <div className="border-b border-rule bg-paper-3/50 px-4 py-2.5">
         <SectionLabel>Documents · visible only to you</SectionLabel>
       </div>
-      <DocRow kind="aadhaar" label="Aadhaar" numberVal={aadhaar}
-              setNumberVal={setAadhaar} path={emp.aadhaar_doc_path} />
-      <DocRow kind="pan" label="PAN" numberVal={pan}
-              setNumberVal={setPan} path={emp.pan_doc_path} />
-      <p className="px-4 py-2 text-xs text-ink-faint">
-        Numbers save on blur; images are stored privately — managers can never open them.
+      <DocRecord kind="aadhaar" label="Aadhaar" placeholder="XXXX XXXX XXXX"
+                 draft={aadhaar} setDraft={setAadhaar} saved={emp.aadhaar_no}
+                 path={emp.aadhaar_doc_path} uploading={upload.isPending}
+                 onSaveNumber={(v) => saveNums.mutate({ aadhaar_no: v })}
+                 onPickFile={(f) => upload.mutate({ kind: "aadhaar", f })} />
+      <DocRecord kind="pan" label="PAN" placeholder="ABCDE1234F"
+                 draft={pan} setDraft={setPan} saved={emp.pan_no}
+                 path={emp.pan_doc_path} uploading={upload.isPending}
+                 onSaveNumber={(v) => saveNums.mutate({ pan_no: v })}
+                 onPickFile={(f) => upload.mutate({ kind: "pan", f })} />
+      <p className="px-4 py-2.5 text-xs text-ink-faint">
+        Numbers save when you leave the field; images are stored privately — managers can never open them.
       </p>
     </Card>
   );
 }
 
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+/** One document = one bounded record: its own title row, its own number field,
+ * its own attach control. Defined at module level so typing a number never
+ * remounts the field. */
+function DocRecord({
+  kind, label, placeholder, draft, setDraft, saved, path, uploading,
+  onSaveNumber, onPickFile,
+}: {
+  kind: "aadhaar" | "pan"; label: string; placeholder: string;
+  draft: string | null; setDraft: (v: string | null) => void;
+  saved: string | null; path: string | null; uploading: boolean;
+  onSaveNumber: (v: string) => void; onPickFile: (f: File) => void;
+}) {
+  const file = useRef<HTMLInputElement>(null);
+  const shown = draft ?? saved ?? "";
+  const dirty = draft != null && draft !== (saved ?? "");
+  return (
+    <section className="border-b border-rule px-4 py-3 last:border-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <FileBadge size={16} className="shrink-0 text-ink-faint" />
+        <span className="text-sm font-medium">{label}</span>
+        {dirty
+          ? <Badge tone="warn">unsaved</Badge>
+          : path ? <Badge tone="good">image on file</Badge>
+                 : <Badge tone="neutral">no image</Badge>}
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,16rem)_auto] sm:items-center">
+        <Input aria-label={`${label} number`} placeholder={placeholder} value={shown}
+               onChange={(ev) => setDraft(ev.target.value)}
+               onBlur={() => { if (dirty) onSaveNumber((draft ?? "").trim()); }} />
+        <div className="flex items-center gap-2">
+          <input ref={file} type="file" hidden accept="image/*,.pdf"
+                 aria-label={`${label} image file`}
+                 onChange={(ev) => {
+                   const f = ev.target.files?.[0];
+                   if (f) onPickFile(f);
+                 }} />
+          <Button size="sm" variant="outline" className="flex-1 sm:flex-none"
+                  onClick={() => file.current?.click()}>
+            <Camera size={14} /> {path ? "Replace image" : "Attach image"}
+          </Button>
+          {path && (
+            <a href={path} target="_blank" rel="noreferrer" className="shrink-0"
+               aria-label={`Open ${label} image`}>
+              <img src={path} alt={`${label} document`}
+                   className="h-11 w-14 rounded border border-rule object-cover hover:border-accent" />
+            </a>
+          )}
+        </div>
+      </div>
+      {uploading && <p className="mt-1.5 text-xs text-ink-faint">Uploading {kind} image…</p>}
+    </section>
+  );
+}
+
+function Fact({ label, value, hint }: {
+  label: string; value: React.ReactNode; hint?: string;
+}) {
   return (
     <div>
       <SectionLabel>{label}</SectionLabel>
       <div className="mt-0.5 text-sm font-medium">{value}</div>
+      {hint && <div className="mt-0.5 text-xs text-ink-faint">{hint}</div>}
     </div>
   );
 }
@@ -182,7 +260,7 @@ function Fact({ label, value }: { label: string; value: React.ReactNode }) {
 function EditPerson({ emp, shifts }: { emp: any; shifts: any[] }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState<any>(() => ({
+  const saved = useMemo(() => ({
     name: emp.name, phone: emp.phone ?? "", designation: emp.designation ?? "",
     monthly_salary_rupees: String(emp.monthly_salary_rupees ?? ""),
     divisor: String(emp.divisor ?? 26),
@@ -192,7 +270,8 @@ function EditPerson({ emp, shifts }: { emp: any; shifts: any[] }) {
     pref_off_dow: emp.pref_off_dow ?? "",
     upi_id: emp.upi_id ?? "",
     notes: emp.notes ?? "",
-  }));
+  }), [emp]);
+  const [f, setF] = useState<any>(() => saved);
   const [err, setErr] = useState("");
   const set = (k: string) => (ev: any) => setF((x: any) => ({ ...x, [k]: ev.target.value }));
 
@@ -212,13 +291,18 @@ function EditPerson({ emp, shifts }: { emp: any; shifts: any[] }) {
     },
     onError: (ex: any) => setErr(ex.message),
   });
+  const draft = useDirtyDraft({
+    open, label: `edit of ${emp.name}`,
+    values: f, pristine: saved,
+    discard: () => { setF(saved); setErr(""); setOpen(false); },
+  });
 
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         <Pencil size={14} /> Edit
       </Button>
-      <Sheet open={open} onClose={() => setOpen(false)} title={`Edit ${emp.name}`}>
+      <Sheet open={open} onClose={draft.close} title={`Edit ${emp.name}`}>
         <div className="space-y-3.5">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Name"><Input value={f.name} onChange={set("name")} /></Field>

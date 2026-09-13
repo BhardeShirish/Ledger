@@ -5,7 +5,7 @@
  * figure or cash balance shown as if it were current is worse than an honest
  * error. Offline writes are handled by the outbox in the app, not here.
  */
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL = `ledger-shell-${VERSION}`;
 const ASSETS = `ledger-assets-${VERSION}`;
 const OFFLINE_URL = "/index.html";
@@ -16,11 +16,18 @@ self.addEventListener("install", (event) => {
       const cache = await caches.open(SHELL);
       // cache: "reload" so a refresh can never re-cache a stale shell from
       // the HTTP cache, which is how PWAs get stuck on an old build.
-      await cache.add(new Request(OFFLINE_URL, { cache: "reload" }));
+      const response = await fetch(new Request(OFFLINE_URL, { cache: "reload" }));
+      if (!cacheablePage(response)) throw new Error("Ledger's offline page is unavailable");
+      await cache.put(OFFLINE_URL, response);
       await self.skipWaiting();
     })(),
   );
 });
+
+function cacheablePage(response) {
+  return response.ok && !response.redirected &&
+    response.headers.get("content-type")?.includes("text/html");
+}
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
@@ -50,7 +57,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   // Never cache the API. Money must be read live or not at all.
-  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return;
 
   // Navigations: network first so a deployed update is picked up straight
   // away, falling back to the cached shell when there is no network.
@@ -59,8 +66,12 @@ self.addEventListener("fetch", (event) => {
       (async () => {
         try {
           const fresh = await fetch(request);
-          const cache = await caches.open(SHELL);
-          cache.put(OFFLINE_URL, fresh.clone());
+          // A gateway failure or redirected Access login is not the app shell.
+          // Never replace the usable offline copy with one of those pages.
+          if (cacheablePage(fresh)) {
+            const cache = await caches.open(SHELL);
+            await cache.put(OFFLINE_URL, fresh.clone());
+          }
           return fresh;
         } catch {
           const cached = await caches.match(OFFLINE_URL, { cacheName: SHELL });
@@ -80,9 +91,10 @@ self.addEventListener("fetch", (event) => {
         const cached = await caches.match(request, { cacheName: ASSETS });
         if (cached) return cached;
         const fresh = await fetch(request);
-        if (fresh.ok && fresh.status === 200) {
+        if (fresh.ok && !fresh.redirected &&
+            !fresh.headers.get("content-type")?.includes("text/html")) {
           const cache = await caches.open(ASSETS);
-          cache.put(request, fresh.clone());
+          await cache.put(request, fresh.clone());
         }
         return fresh;
       })(),

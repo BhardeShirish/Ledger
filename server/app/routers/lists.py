@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..costgroups import GROUPS, guess_group
 from ..models import ExpenseCategory, User
-from ..security import current_user, require_owner
+from ..security import current_user, require_owner, require_stepup
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
@@ -50,7 +50,7 @@ def categories(user: User = Depends(current_user), db: Session = Depends(get_db)
 
 @router.patch("/categories/{category_id}/group")
 def set_category_group(category_id: int, body: CategoryGroupIn,
-                       user: User = Depends(current_user),
+                       user: User = Depends(require_stepup),
                        db: Session = Depends(get_db)):
     if body.cost_group not in GROUPS:
         raise HTTPException(422, "That is not a P&L group.")

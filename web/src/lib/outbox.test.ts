@@ -4,7 +4,9 @@
  *  a flush overlapping itself, and a flush overwriting an entry that was
  *  added while it was running. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { enqueue, flushOutbox, getOutbox, setOutboxIdentity } from "./outbox";
+import { enqueue, flushOutbox, getOutbox, isWriteAcknowledgement, setOutboxIdentity } from "./outbox";
+
+const expenseAck = { id: 1, outlet_id: 1, business_date: "2026-09-09", amount_rupees: 500 };
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -28,7 +30,9 @@ describe("offline outbox", () => {
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: any) => {
       sent.push(init.headers["X-Idempotency-Key"]);
       await gate.promise;
-      return { ok: true, status: 201, json: async () => ({}) };
+      return new Response(JSON.stringify(expenseAck), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      });
     }));
 
     // The `online` event and the 60s timer can both fire a flush.
@@ -47,7 +51,9 @@ describe("offline outbox", () => {
     const gate = deferred<void>();
     vi.stubGlobal("fetch", vi.fn(async () => {
       await gate.promise;
-      return { ok: true, status: 201, json: async () => ({}) };
+      return new Response(JSON.stringify(expenseAck), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      });
     }));
 
     const flush = flushOutbox();
@@ -82,5 +88,82 @@ describe("offline outbox", () => {
     });
 
     expect(getOutbox()[0].summary).toBe("Sale · cash · ₹450 · 2026-09-08");
+  });
+
+  it("never removes queued money when a remote gateway returns a login page", async () => {
+    enqueue("/api/expenses", "POST", { amount_rupees: 500 });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>Sign in</html>", {
+      headers: { "Content-Type": "text/html" },
+    })));
+    expect(await flushOutbox()).toBe(0);
+    expect(getOutbox()).toHaveLength(1);
+    expect(getOutbox()[0].error).toContain("network sign-in");
+  });
+
+  it.each([
+    ["text/plain", "Gateway login required"],
+    ["application/json", '{"ok":true}'],
+    ["application/json", '{"id":'],
+    ["", ""],
+  ])("keeps queued expenses without a complete Ledger acknowledgement (%s)", async (type, body) => {
+    enqueue("/api/expenses", "POST", { amount_rupees: 500 });
+    const id = getOutbox()[0].id;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+      headers: { "Content-Type": type },
+    })));
+    expect(await flushOutbox()).toBe(0);
+    expect(getOutbox()[0].id).toBe(id);
+  });
+
+  it("does not acknowledge redirected responses even with matching JSON", async () => {
+    enqueue("/api/expenses", "POST", { amount_rupees: 500 });
+    const response = new Response(JSON.stringify(expenseAck), {
+      headers: { "Content-Type": "application/json" },
+    });
+    Object.defineProperty(response, "redirected", { value: true });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    expect(await flushOutbox()).toBe(0);
+    expect(getOutbox()).toHaveLength(1);
+  });
+
+  it.each([
+    ["/api/expenses", expenseAck],
+    ["/api/sales/manual", { ok: true, amount_rupees: 500 }],
+    ["/api/attendance/mark", { employee_id: 1, date: "2026-09-09", status: "P" }],
+    ["/api/attendance/bulk", { saved: 1, rows: [{ employee_id: 1, date: "2026-09-09", status: "P" }] }],
+    ["/api/attendance/bulk", { saved: 0, rows: [] }],
+  ])("accepts the existing response contract for %s", (path, body) => {
+    expect(isWriteAcknowledgement(String(path), body)).toBe(true);
+    expect(isWriteAcknowledgement(String(path), { ok: true })).toBe(false);
+  });
+
+  it("stops on a lost connection without sending later writes out of order", async () => {
+    enqueue("/api/sales/manual", "PUT", { amount_rupees: 500 });
+    enqueue("/api/sales/manual", "PUT", { amount_rupees: 700 });
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Offline"));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await flushOutbox()).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getOutbox()).toHaveLength(2);
+    expect(getOutbox()[0].error).toContain("saved on this device");
+  });
+
+  it("requests sign-in and keeps pending entries when the session expires", async () => {
+    enqueue("/api/expenses", "POST", { amount_rupees: 500 });
+    enqueue("/api/expenses", "POST", { amount_rupees: 700 });
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"detail":"Sign in"}', {
+      status: 401, headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const expired = vi.fn();
+    window.addEventListener("ledger:session-expired", expired);
+    try {
+      expect(await flushOutbox()).toBe(0);
+      expect(expired).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(getOutbox()).toHaveLength(2);
+    } finally {
+      window.removeEventListener("ledger:session-expired", expired);
+    }
   });
 });

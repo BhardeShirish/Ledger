@@ -31,7 +31,7 @@ export function MonthClosePanel({ outletId, month }: { outletId: number; month: 
   const items: any[] = data.items ?? [];
 
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-rule px-4 py-3">
         <div>
           <h2 className="font-semibold">Month close</h2>
@@ -62,7 +62,8 @@ export function MonthClosePanel({ outletId, month }: { outletId: number; month: 
           ))}
         </div>
       )}
-      <div className="space-y-2 border-t border-rule px-4 py-3">
+      <div role="group" aria-label="Month close actions"
+           className="save-bar sticky z-20 space-y-2 rounded-b-lg border-t border-rule bg-paper px-4 py-3 md:static">
         {(force || reopen) && (
           <Input value={reason} onChange={(event) => setReason(event.target.value)}
                  placeholder={reopen ? "Why is this period being reopened?" : "Why are blockers being overridden?"}

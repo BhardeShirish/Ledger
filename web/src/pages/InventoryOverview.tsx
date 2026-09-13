@@ -3,7 +3,7 @@ import { Link, useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
 import { addDaysISO, todayISO } from "../lib/format";
 import { LowStockTable } from "./Inventory";
-import { Badge, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
+import { Badge, Button, Card, ErrorNote, SectionLabel, Spinner, StatTile } from "../components/ui";
 
 export default function InventoryOverview() {
   const { outletId } = useOutletContext<{ outletId: number }>();
@@ -17,6 +17,24 @@ export default function InventoryOverview() {
   });
 
   if (ov.isLoading || intelligence.isLoading) return <Spinner label="Loading stock evidence…" />;
+  if (ov.isError || intelligence.isError) {
+    const retrying = ov.isFetching || intelligence.isFetching;
+    return (
+      <div className="space-y-3">
+        <ErrorNote msg={ov.isError && intelligence.isError
+          ? "Couldn't load stock or inventory evidence. Check your connection and retry."
+          : ov.isError
+            ? "Couldn't load stock. Check your connection and retry."
+            : "Couldn't load inventory evidence. Check your connection and retry."} />
+        <Button variant="outline" disabled={retrying} onClick={() => {
+          if (ov.isError) void ov.refetch();
+          if (intelligence.isError) void intelligence.refetch();
+        }}>
+          {retrying ? "Retrying stock evidence…" : "Retry stock evidence"}
+        </Button>
+      </div>
+    );
+  }
   const items = ov.data?.items ?? [];
   const evidence = intelligence.data?.items ?? [];
   const supported = evidence.filter((item: any) => item.reorder_eligible);

@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext, useParams } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 import { api } from "../api/client";
 import { fmtDateShort, inr, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import {
   Badge, Button, Card, EmptyState, ErrorNote, Field, Input, SectionLabel,
   Select, Sheet, Spinner,
@@ -24,22 +25,30 @@ export default function VendorDetail() {
   const qc = useQueryClient();
 
   const [openType, setOpenType] = useState<"purchase_credit" | "payment" | null>(null);
-  const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState("upi");
-  const [date, setDate] = useState(todayISO());
-  const [note, setNote] = useState("");
+  const blank = useMemo(
+    () => ({ amount: "", mode: "upi", date: todayISO(), note: "", receiptPath: null as string | null }),
+    [],
+  );
+  const [amount, setAmount] = useState(blank.amount);
+  const [mode, setMode] = useState(blank.mode);
+  const [date, setDate] = useState(blank.date);
+  const [note, setNote] = useState(blank.note);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [receiptPath, setReceiptPath] = useState<string | null>(null);
+  const [receiptPath, setReceiptPath] = useState<string | null>(blank.receiptPath);
   const [err, setErr] = useState("");
   useEffect(() => {
     setAmount(""); setMode("upi"); setDate(todayISO());
     setNote(""); setReceiptPath(null); setErr("");
   }, [openType, vid]);
+  const amountValue = Number(amount);
+  const amountValid = amount.trim() !== ""
+    && Number.isFinite(amountValue) && amountValue > 0;
+  const amountError = amount.trim() !== "" && !amountValid
+    ? "Amount must be a finite amount greater than ₹0." : "";
 
   const add = useMutation({
     mutationFn: () => api.post(`/vendors/${vid}/entries`, {
-      outlet_id: outletId,
-      date, type: openType, amount_rupees: Number(amount), mode,
+      outlet_id: outletId, date, type: openType, amount_rupees: amountValue, mode,
       note, receipt_path: receiptPath,
     }),
     onSuccess: () => {
@@ -50,8 +59,24 @@ export default function VendorDetail() {
     },
     onError: (e: any) => setErr(e.message),
   });
+  const draft = useDirtyDraft({
+    open: openType != null,
+    label: openType === "payment" ? "vendor payment" : "credit purchase",
+    values: { amount, mode, date, note, receiptPath }, pristine: blank,
+    discard: () => setOpenType(null),
+  });
 
   if (q.isLoading) return <Spinner />;
+  if (q.isError || !q.data) {
+    return (
+      <div className="space-y-3">
+        <ErrorNote msg="Couldn't load this vendor ledger. Check your connection and retry." />
+        <Button variant="outline" disabled={q.isFetching} onClick={() => void q.refetch()}>
+          {q.isFetching ? "Retrying vendor ledger…" : "Retry vendor ledger"}
+        </Button>
+      </div>
+    );
+  }
   const { vendor, rows } = q.data;
 
   return (
@@ -95,7 +120,7 @@ export default function VendorDetail() {
         )}
       </Card>
 
-      <Sheet open={openType != null} onClose={() => setOpenType(null)}
+      <Sheet open={openType != null} onClose={draft.close}
              title={openType === "payment" ? `Payment to ${vendor.name}` : `Credit purchase from ${vendor.name}`}>
         <div className="space-y-3.5">
           <Field label="Amount">
@@ -135,8 +160,8 @@ export default function VendorDetail() {
             <Camera size={14} /> Attach receipt
           </Button>
           {receiptPath && <Badge tone="good">receipt attached</Badge>}
-          <ErrorNote msg={err} />
-          <Button size="lg" className="w-full" disabled={!Number(amount) || add.isPending}
+          <ErrorNote msg={err || amountError} />
+          <Button size="lg" className="w-full" disabled={!amountValid || add.isPending}
                   onClick={() => add.mutate()}>
             Save entry
           </Button>

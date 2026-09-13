@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:guide": "vitest run src/components/OnboardingGuide.test.tsx src/components/Layout.test.tsx"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",

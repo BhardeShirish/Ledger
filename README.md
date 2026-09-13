@@ -41,11 +41,27 @@ evidence, then inspect the wider business picture.
   </a>
 </p>
 
+### Import a bank statement without booking it twice
+
+<p align="center">
+  <a href="docs/screenshots/13-statement-import-review.png">
+    <img src="docs/screenshots/13-statement-import-review-overview.png" alt="Ledger bank statement import review with duplicate and category checks" width="1080">
+  </a>
+</p>
+
 ### Understand the month before making a decision
 
 <p align="center">
   <a href="docs/screenshots/09-deep-analysis.png">
     <img src="docs/screenshots/09-deep-analysis-overview.png" alt="Ledger deep restaurant analysis" width="1080">
+  </a>
+</p>
+
+### Get from an empty install to a first closed day
+
+<p align="center">
+  <a href="docs/screenshots/14-getting-started.png">
+    <img src="docs/screenshots/14-getting-started.png" alt="Ledger record-validated Getting started guide" width="1080">
   </a>
 </p>
 
@@ -57,8 +73,9 @@ evidence, then inspect the wider business picture.
   </a>
 </p>
 
-See the [full visual tour](docs/SCREENSHOTS.md) for expenses, cash close,
-inventory, purchasing, reports, staffing, and owner controls.
+See the [full visual tour](docs/SCREENSHOTS.md) for expenses, cash close, bills
+and splits, inventory, purchasing, reports, staffing, and owner controls. Recent
+work is listed in the [changelog](CHANGELOG.md).
 
 ---
 
@@ -195,7 +212,8 @@ loud restart loop than a box on the internet with a weak password.
 
 The interface is fully responsive — a bottom tab bar, a hidden sidebar, and
 touch-sized controls — and it installs to the home screen as an app. There is
-no separate mobile app to download.
+no separate Ledger mobile client; private remote access uses the VPN
+companion described below.
 
 **It must be served over HTTPS.** This is not a preference. Browsers only grant
 offline storage and installability to a *secure context*, so a plain
@@ -203,26 +221,37 @@ offline storage and installability to a *secure context*, so a plain
 the Wi-Fi drops. Worse, it sends your payroll and your password across the café
 network in the clear.
 
-The free way to do this properly is [Tailscale](https://tailscale.com). On the
-PC holding the records:
+**Away from the restaurant, without a paid service or a domain:** use the
+[private-access setup guide](docs/REMOTE-ACCESS.md). The recommended Windows
+route is **NetBird Free + Caddy private HTTPS**: up to five users and 100
+devices under the currently published plan. Install the NetBird companion app
+on the phone and trust the Ledger PC's private HTTPS certificate authority
+once. Ledger itself is still a browser app. The PC must remain on and online.
 
-```bash
-tailscale up
-tailscale serve --bg 8080
+On a new restaurant PC, install or move Ledger first, then run one bootstrap
+command. It checks the loopback Ledger service, gets stock Caddy from its
+official source, and starts NetBird enrollment only when necessary; it does
+not make Ledger reachable:
+
+```powershell
+.\setup\Set-LedgerRemoteAccess.ps1 -Action Bootstrap -OwnerAuthorized
 ```
 
-Install Tailscale on the phone too, sign in to the same account, and open the
-`https://your-pc.your-tailnet.ts.net` address it prints. Only your own devices
-can reach it; nothing is exposed to the internet, and the certificate is real,
-so the app installs and works offline. On the phone, choose "Add to Home
-Screen" and Ledger becomes an icon like any other app.
+You still sign in to your own NetBird account, create a narrow approved-device
+policy, approve the normal Windows firewall rule, and trust the public
+certificate on each phone/laptop. Those controls are intentionally not
+automated. Follow the guide to finish private HTTPS and optionally enable
+startup at Windows sign-in.
 
-If you would rather not use Tailscale, any HTTPS reverse proxy — Caddy, nginx
-with Let's Encrypt, or a Cloudflare Tunnel — does the same job.
+**Tailscale Personal is not free for this commercial restaurant use.** Its
+current terms limit Personal to non-commercial use. Cloudflare Zero Trust
+Free is another business-capable option for up to 50 users, but private WARP
+access still needs account enrollment and proper browser HTTPS; it does not
+fix a blocked login. The guide compares both and links their official terms.
 
-**Plain LAN access**, if you accept the trade-off, is `.\start.ps1 -Lan` on
-Windows or `LEDGER_BIND=0.0.0.0` under Docker. Ledger prints the address and
-warns you. Do not do this on a network customers can join.
+Do not expose port 8080, enable `-Lan`, forward router ports, or click through
+certificate warnings to get remote access working. Internet access and power
+still cost money; these free service plans are not an uptime guarantee.
 
 ### When the connection drops
 
@@ -245,23 +274,62 @@ that is quietly a week out of date is more dangerous than an error message.
 
 ## Your data
 
-Everything lives in `%LOCALAPPDATA%\Ledger\server\data` (Windows, once
-installed), `server/data` (when you run it from the source folder) or the
-`ledger-data` volume
-(Docker): the SQLite database, uploaded receipts, and the signing key that
-keeps you logged in across restarts. Copy that folder and you have copied the
-whole business.
+The active records live in `%LOCALAPPDATA%\Ledger\server\data` (Windows,
+once installed), `server\data` (when you run it from the source folder), or
+the `ledger-data` volume (Docker). That folder holds `ledger.db`, uploaded
+receipts, and the signing key that keeps existing sessions valid.
 
-To restore a backup, stop Ledger, then replace the database and uploaded files
-in that folder before restarting. Do not drop the backup ZIP into
-the data folder — the server does not auto-extract it.
+On Windows, Ledger also creates a **verified full recovery ZIP** on first
+start and then daily in `%USERPROFILE%\Documents\Ledger Backups`. Each copy
+contains the database, receipts and signing key, and the newest 30 daily
+copies are retained. This folder is deliberately outside
+`%LOCALAPPDATA%\Ledger`: deleting the entire Ledger application folder does
+not delete the recovery copies. Open **Settings → Data safety** to see the
+exact recovery folder and latest completed copy.
 
-**Stop Ledger before you copy the database.** While it is running, part of
-your most recent work is held in the `ledger.db-wal` file beside it. Copying
-those files from a live database produces a snapshot that does not start at
-all — tested, not theorised. If you cannot stop it, copy the newest file from
-the `backups` folder instead: those are consistent snapshots, and a copy of
-one renamed to `ledger.db` starts cleanly.
+If the Ledger folder is deleted, reinstall Ledger, then run the installed
+recovery helper against the newest ZIP:
+
+```powershell
+Set-Location "$env:LOCALAPPDATA\Ledger"
+.\setup\Restore-LedgerBackup.ps1 `
+  -BackupPath "$env:USERPROFILE\Documents\Ledger Backups\ledger-recovery-YYYY-MM-DD.zip" `
+  -OwnerAuthorized -ConfirmRestore
+```
+
+The helper validates the ZIP and SQLite database before it stops Ledger,
+preserves any current data in `Documents\Ledger Backups\before-restore-*`,
+then starts Ledger after restoring. Do not extract a backup over a running
+Ledger data folder or drop the ZIP into it.
+
+These recovery ZIPs protect against accidental deletion of Ledger's
+application folder—not disk failure, theft, fire, ransomware, or deletion of
+the entire Windows user profile. Keep an occasional encrypted copy on a
+separate device you control. For Docker, set `LEDGER_RECOVERY_DIR` to a
+separately mounted backup volume if you need this same separation.
+
+### Private cloud copy with Google Drive
+
+Do **not** use Google Sheets as a database backup. It cannot preserve the
+complete SQLite database, receipt files or recovery metadata, and spreadsheet
+imports can change data formats. Instead, install
+[Google Drive for desktop](https://support.google.com/drive/answer/10838124),
+sign in to the restaurant-controlled Google account, and create a private
+`Ledger Backups` folder in Drive. Google documents that ordinary local files
+in that folder are synchronized to Drive; its current free Google Account
+storage allowance is up to 15 GB, shared with Gmail and Photos.
+
+In **Settings → Data safety**, paste that folder's actual File Explorer path
+(for example `G:\My Drive\Ledger Backups`) into **Cloud or external recovery
+folder**, then choose **Use this recovery folder** and enter the owner
+password when prompted. Ledger verifies it is writable, writes a complete
+recovery ZIP immediately, and keeps writing daily ZIPs there. It never asks
+for, stores, or sends a Google password, OAuth token, or Google API key.
+
+Check Google Drive for desktop's sync status after the first backup. Treat the
+Drive account as part of the restaurant's security boundary: enable MFA, do
+not share the folder publicly, and make sure the account's remaining storage
+comfortably exceeds the backup size.
 
 ### Moving to a new Windows PC
 
@@ -351,17 +419,17 @@ two PCs that are both taking entries.
 ## Contributing
 
 ```bash
-cd server && pip install -r requirements.txt
+cd server && python -m pip install -r requirements.txt -r requirements-dev.txt
 export LEDGER_OWNER_PASSWORD='choose-a-strong-password'
 uvicorn app.main:app --reload --port 8000          # API + /api/docs
 cd ../web && npm install && npm run dev            # SPA on 5173, proxies /api
 ```
 
-Before opening a pull request:
+Before opening a pull request, run these checks from the repository root:
 
 ```bash
-cd server && pytest -q                             # 292 tests
-cd web && npx vitest run && npx tsc --noEmit && npx eslint src
+(cd server && python -m pip install -r requirements.txt -r requirements-dev.txt && python -m pytest -q)
+(cd web && npx vitest run && npx tsc --noEmit && npx eslint src)
 ```
 
 Two house rules, both learned the hard way:
@@ -370,3 +438,5 @@ Two house rules, both learned the hard way:
    purpose, see the new test go red, then put the code back.
 2. **Never show a confident number the data does not support.** If a figure is
    missing an input, name the input.
+
+Record what you changed in [`CHANGELOG.md`](CHANGELOG.md) under *Unreleased*.

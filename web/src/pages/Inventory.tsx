@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link, NavLink, Outlet, useLocation, useOutletContext } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useOutletContext } from "react-router-dom";
+import { useState } from "react";
 import { clsx } from "clsx";
-import { api } from "../api/client";
-import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
+import { Check, ChevronDown } from "lucide-react";
+import { Badge, SectionLabel, Sheet } from "../components/ui";
 
 const TABS = [
   { to: "/inventory", label: "Overview", end: true },
@@ -13,19 +13,57 @@ const TABS = [
   { to: "/inventory/order", label: "Order list" },
 ];
 
+const isActiveTab = (tab: { to: string; end?: boolean }, pathname: string) =>
+  tab.end ? pathname === "/inventory" : pathname.startsWith(tab.to);
+
 export default function InventoryLayout() {
   const loc = useLocation();
   const { outletId } = useOutletContext<{ outletId: number }>();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const active = TABS.find((t) => isActiveTab(t, loc.pathname)) ?? TABS[0];
   return (
     <div className="space-y-4">
       <header>
         <SectionLabel>Inventory</SectionLabel>
         <h1 className="text-2xl font-semibold tracking-tight">Stock, usage & food cost</h1>
       </header>
-      <div className="flex gap-1 overflow-x-auto border-b border-rule pb-px">
+
+      {/* Mobile: one picker that names where you are. Six tabs scrolled
+          sideways hid four of their own destinations off-screen. */}
+      <button type="button" aria-haspopup="dialog" aria-expanded={pickerOpen}
+              onClick={() => setPickerOpen(true)}
+              className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md border border-rule-strong bg-paper px-3 py-2 text-left md:hidden">
+        <span className="min-w-0">
+          <span className="label-caps block text-ink-faint">Inventory section</span>
+          <span className="block truncate font-semibold">{active.label}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1 text-sm text-ink-faint">
+          Change <ChevronDown size={16} />
+        </span>
+      </button>
+      <Sheet open={pickerOpen} onClose={() => setPickerOpen(false)} title="Go to inventory section">
+        <nav className="-my-1 divide-y divide-rule">
+          {TABS.map((t) => {
+            const current = isActiveTab(t, loc.pathname);
+            return (
+              <NavLink key={t.to} to={t.to} end={t.end}
+                       aria-current={current ? "page" : undefined}
+                       onClick={() => setPickerOpen(false)}
+                       className="flex min-h-11 items-center justify-between gap-3 px-1 py-2.5 text-sm font-medium">
+                <span>{t.label}</span>
+                {current
+                  ? <Badge tone="accent"><Check size={12} /> you are here</Badge>
+                  : <span className="text-ink-faint">open</span>}
+              </NavLink>
+            );
+          })}
+        </nav>
+      </Sheet>
+
+      {/* Desktop keeps the full tab row. */}
+      <div className="hidden flex-wrap gap-1 border-b border-rule pb-px md:flex">
         {TABS.map((t) => {
-          const active = t.end ? loc.pathname === "/inventory"
-                               : loc.pathname.startsWith(t.to);
+          const active = isActiveTab(t, loc.pathname);
           return (
             <NavLink key={t.to} to={t.to} end={t.end}
                      className={clsx("shrink-0 rounded-t-md px-3.5 py-2 text-sm font-medium",

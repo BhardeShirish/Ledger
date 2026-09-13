@@ -15,6 +15,26 @@ def test_manager_cannot_create_employee(client, manager, outlet_id):
     assert r.status_code == 403
 
 
+def test_user_updates_validate_roles_and_preserve_the_final_active_owner(client, owner):
+    invalid = {
+        "username": owner["username"], "full_name": owner["full_name"],
+        "password": None, "role": "admin", "outlet_ids": owner["outlet_ids"],
+        "is_active": True,
+    }
+    assert client.post("/api/users", json={**invalid, "username": "invalid-role"}).status_code == 422
+    assert client.patch(f"/api/users/{owner['id']}", json=invalid).status_code == 422
+
+    for role, is_active in (("manager", True), ("owner", False)):
+        blocked = client.patch(f"/api/users/{owner['id']}", json={
+            **invalid, "role": role, "is_active": is_active,
+        })
+        assert blocked.status_code == 422, blocked.text
+
+    unchanged = next(row for row in client.get("/api/users").json() if row["id"] == owner["id"])
+    assert unchanged["role"] == "owner" and unchanged["is_active"] is True
+    assert client.delete(f"/api/users/{owner['id']}").status_code == 405
+
+
 def test_manager_salary_masked(client, manager, outlet_id):
     r = client.post("/api/staff/employees", json={
         "name": "Masked Emp", "outlet_id": outlet_id,

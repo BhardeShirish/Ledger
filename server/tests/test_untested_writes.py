@@ -131,6 +131,37 @@ def test_settings_save_together_and_refuse_unknown_keys(client):
         "a rejected key must not half-apply the batch")
 
 
+def test_settings_reject_non_finite_and_invalid_numeric_values(client):
+    stepup(client)
+    for value in ("NaN", "Infinity", "-Infinity", "-1", "1.5", "8761", '"48"'):
+        r = client.put(
+            "/api/admin/settings",
+            content=f'{{"key":"edit_cutoff_hours","value":{value}}}',
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 422, r.text
+
+    for key, value in (
+        ("variance_alert_paise", "NaN"),
+        ("salary_divisor_default", "0"),
+        ("denominations", "[NaN]"),
+    ):
+        r = client.put(
+            "/api/admin/settings",
+            content=f'{{"key":"{key}","value":{value}}}',
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 422, r.text
+
+    bulk = client.put(
+        "/api/admin/settings/bulk",
+        content='{"values":{"edit_cutoff_hours":168,"denominations":[NaN]}}',
+        headers={"content-type": "application/json"},
+    )
+    assert bulk.status_code == 422, bulk.text
+    assert int(client.get("/api/admin/settings").json()["edit_cutoff_hours"]) == 48
+
+
 # ── payslip adjustments and payment ─────────────────────────────────────────
 
 def _slip(outlet_id):
@@ -174,6 +205,21 @@ def test_a_payslip_can_be_adjusted_and_the_adjustment_undone(client, outlet_id):
     detail = client.get(f"/api/payroll/runs/{_run_of(slip_id)}").json()
     slip = next(s for s in detail["payslips"] if s["id"] == slip_id)
     assert not slip["adjustments"]
+
+
+def test_adjustments_reject_non_finite_values_and_missing_reasons(client, outlet_id):
+    stepup(client)
+    slip_id = _slip(outlet_id)
+    for value in ("-1", "NaN", "Infinity"):
+        r = client.post(
+            f"/api/payroll/payslips/{slip_id}/adjust",
+            content=f'{{"kind":"bonus_amt","amount_rupees":{value},"reason":"test"}}',
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 422, r.text
+    assert client.post(f"/api/payroll/payslips/{slip_id}/adjust", json={
+        "kind": "bonus_days", "days": 1,
+    }).status_code == 422
 
 
 def test_marking_a_payslip_paid_defaults_to_upi(client, outlet_id):

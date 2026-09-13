@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
 import { fmtDateShort, inr, todayISO } from "../lib/format";
+import { useDirtyDraft } from "../lib/useDirtyDraft";
 import {
   Badge, Button, Card, EmptyState, ErrorNote, Field, Input, SectionLabel, Select, Sheet,
   Spinner,
@@ -14,7 +15,11 @@ export default function InventoryWastage() {
   const guarded = useGuarded();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ stock_item_id: "", qty: "", reason: "spoiled", business_date: todayISO() });
+  const blank = useMemo(
+    () => ({ stock_item_id: "", qty: "", reason: "spoiled", business_date: todayISO() }),
+    [],
+  );
+  const [f, setF] = useState(blank);
   const [err, setErr] = useState("");
 
   const list = useQuery({
@@ -26,19 +31,28 @@ export default function InventoryWastage() {
     queryKey: ["inv-items", outletId],
     queryFn: () => api.get(`/inventory/overview?outlet_id=${outletId}`),
   });
+  const qty = Number(f.qty);
+  const qtyValid = f.qty.trim() !== "" && Number.isFinite(qty) && qty > 0;
+  const qtyError = f.qty.trim() !== "" && !qtyValid
+    ? "Quantity must be a finite number greater than 0." : "";
 
   const add = useMutation({
     mutationFn: () => guarded(() => api.post("/inventory/wastage", {
       outlet_id: outletId, business_date: f.business_date,
-      stock_item_id: Number(f.stock_item_id), qty: Number(f.qty),
+      stock_item_id: Number(f.stock_item_id), qty,
       reason: f.reason,
     })),
     onSuccess: () => {
-      setOpen(false); setF((x) => ({ ...x, stock_item_id: "", qty: "", reason: "spoiled" }));
+      setOpen(false); setF(blank); setErr("");
       qc.invalidateQueries({ queryKey: ["inv-wastage"] });
       qc.invalidateQueries({ queryKey: ["inv-items"] });
     },
     onError: (e: any) => setErr(e.message),
+  });
+  const draft = useDirtyDraft({
+    open, label: "wastage entry",
+    values: f, pristine: blank,
+    discard: () => { setF(blank); setErr(""); setOpen(false); },
   });
 
   const totalCost = (list.data ?? []).reduce((s: number, r: any) => s + r.cost_rupees, 0);
@@ -72,7 +86,7 @@ export default function InventoryWastage() {
         ))}
       </Card>
 
-      <Sheet open={open} onClose={() => setOpen(false)} title="Log wastage">
+      <Sheet open={open} onClose={draft.close} title="Log wastage">
         <div className="space-y-3.5">
           <Field label="Item">
             <Select value={f.stock_item_id}
@@ -87,6 +101,7 @@ export default function InventoryWastage() {
             <Field label="Quantity"><Input inputMode="decimal" value={f.qty}
                      onChange={(e) => setF((x) => ({ ...x, qty: e.target.value }))} className="text-right" /></Field>
             <Field label="Date"><Input type="date" value={f.business_date}
+                     max={todayISO()}
                      onChange={(e) => setF((x) => ({ ...x, business_date: e.target.value }))} /></Field>
           </div>
           <Field label="Reason">
@@ -98,13 +113,11 @@ export default function InventoryWastage() {
               <option value="other">Other</option>
             </Select>
           </Field>
-          <ErrorNote msg={err} />
-          <Button size="lg" className="w-full" disabled={!f.stock_item_id || !Number(f.qty) || add.isPending}
+          <ErrorNote msg={err || qtyError} />
+          <Button size="lg" className="w-full" disabled={!f.stock_item_id || !qtyValid || add.isPending}
                   onClick={() => add.mutate()}>Log wastage</Button>
         </div>
       </Sheet>
     </div>
   );
 }
-
-

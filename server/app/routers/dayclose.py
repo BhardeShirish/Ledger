@@ -165,6 +165,9 @@ def close(body: CloseIn, user: User = Depends(current_user), db: Session = Depen
         raise HTTPException(422, "Taken-home cash cannot exceed counted cash")
     exp = expected_breakdown(db, body.outlet_id, body.date)
     counted = int(round(body.counted_rupees * 100))
+    variance_paise = counted - exp["expected_paise"]
+    if variance_paise != 0 and not body.note.strip():
+        raise HTTPException(422, "A non-zero cash variance requires a reason")
     row = (db.query(DayClosure)
              .filter_by(outlet_id=body.outlet_id, business_date=body.date).first())
     if row is not None and row.reopened_at is None:
@@ -190,7 +193,7 @@ def close(body: CloseIn, user: User = Depends(current_user), db: Session = Depen
         )
     row.expected_cash_paise = exp["expected_paise"]
     row.counted_cash_paise = counted
-    row.variance_paise = counted - exp["expected_paise"]
+    row.variance_paise = variance_paise
     row.moved_to_bank_paise = moved_to_bank
     row.counted_breakdown = body.breakdown
     row.note = body.note

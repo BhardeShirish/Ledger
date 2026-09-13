@@ -198,7 +198,7 @@ describe("PurchasePatterns", () => {
         ...PURCHASES.items[0], item: `Item ${i}` })),
     });
     draw(<PurchasePatterns start="2026-06-01" end="2026-08-25" outletId={2} />);
-    const more = await screen.findByText("Show all 12 items");
+    const more = await screen.findByRole("button", { name: "Show all 12 items" });
     expect(screen.queryByText("Item 11")).not.toBeInTheDocument();
     await userEvent.click(more);
     expect(screen.getByText("Item 11")).toBeInTheDocument();

@@ -12,7 +12,20 @@ export type Me = {
   elevated_until: string | null;
 };
 
-type StepUpFn = () => Promise<boolean>;
+/** Route-specific wording for the password sheet.
+ *
+ * A locked screen that only says "this action touches salary or old records"
+ * over a bare spinner leaves no clue about *what* is being unlocked. Every
+ * locked destination passes its own sentence instead. */
+export type StepUpReason = { title?: string; heading?: string; body?: string };
+
+const DEFAULT_STEP_UP: Required<StepUpReason> = {
+  title: "Owner confirmation",
+  heading: "Enter your password to continue",
+  body: "This action touches salary or old records, so we verify it's really you.",
+};
+
+type StepUpFn = (reason?: StepUpReason) => Promise<boolean>;
 
 const AuthCtx = createContext<{
   me: Me | null;
@@ -50,6 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [offline, setOffline] = useState(false);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  const [stepUpReason, setStepUpReason] = useState<StepUpReason | null>(null);
   const [stepUpResolve, setStepUpResolve] = useState<((v: boolean) => void) | null>(null);
 
   const refresh = useCallback(async () => {
@@ -94,8 +108,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("online", back);
   }, [refresh]);
 
-  const requireStepUp = useCallback<StepUpFn>(() => {
+  const requireStepUp = useCallback<StepUpFn>((reason) => {
     return new Promise((resolve) => {
+      setStepUpReason(reason ?? null);
       setStepUpResolve(() => resolve);
       setStepUpOpen(true);
     });
@@ -106,6 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
       {stepUpOpen && (
         <StepUpModal
+          reason={stepUpReason}
           onClose={(ok) => {
             setStepUpOpen(false);
             if (ok) void refresh();
@@ -117,10 +133,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-function StepUpModal({ onClose }: { onClose: (ok: boolean) => void }) {
+function StepUpModal({ reason, onClose }: {
+  reason: StepUpReason | null; onClose: (ok: boolean) => void;
+}) {
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const copy = { ...DEFAULT_STEP_UP, ...(reason ?? {}) };
 
   const submit = async () => {
     if (!pw) return;
@@ -137,13 +156,11 @@ function StepUpModal({ onClose }: { onClose: (ok: boolean) => void }) {
   };
 
   return (
-    <Sheet open onClose={() => onClose(false)} title="Owner confirmation">
+    <Sheet open onClose={() => onClose(false)} title={copy.title}>
       <div>
-        <div className="label-caps mb-1">Owner confirmation</div>
-        <h2 className="text-lg font-semibold leading-tight">Enter your password to continue</h2>
-        <p className="mt-1 text-sm text-ink-soft">
-          This action touches salary or old records, so we verify it's really you.
-        </p>
+        <div className="label-caps mb-1">{copy.title}</div>
+        <h2 className="text-lg font-semibold leading-tight">{copy.heading}</h2>
+        <p className="mt-1 text-sm text-ink-soft">{copy.body}</p>
         <Field label="Password" className="mt-4">
           <Input autoFocus type="password" value={pw}
                  onChange={(e) => setPw(e.target.value)}
@@ -161,15 +178,18 @@ function StepUpModal({ onClose }: { onClose: (ok: boolean) => void }) {
   );
 }
 
-/** Helper hook for mutations that may need elevation on 403/428. */
-export function useGuarded() {
+/** Helper hook for mutations that may need elevation on 403/428.
+ *
+ * `reason` carries the locked destination's own wording into the password
+ * sheet, so the person sees what they are unlocking, not a generic prompt. */
+export function useGuarded(reason?: StepUpReason) {
   const { me, requireStepUp } = useAuth();
   return async function run<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (e: any) {
       if ((e?.status === 428 || e?.status === 403) && me?.role === "owner") {
-        const ok = await requireStepUp();
+        const ok = await requireStepUp(reason);
         if (ok) return fn();
         // The owner deliberately cancelled, so don't also shout an error
         // toast at them. Every other 403 still surfaces.

@@ -9,7 +9,9 @@ import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
 import { useAuth } from "../lib/auth";
 import { fmtDateShort, inr, monthLabel, monthLabelShort } from "../lib/format";
-import { Badge, Button, Card, SectionLabel, Spinner, StatTile } from "../components/ui";
+import {
+  Badge, Button, Card, ErrorNote, Input, SectionLabel, Spinner, StatTile,
+} from "../components/ui";
 import { EmptyMonthHint } from "../components/EmptyMonthHint";
 import { MonthClosePanel } from "../components/MonthClosePanel";
 
@@ -36,13 +38,27 @@ export default function Reports() {
   });
 
   if (q.isLoading) return <Spinner />;
+  if (q.isError) return <ErrorNote msg="Couldn't load this month's report. Try again after checking the Ledger server." />;
   const d = q.data;
   if (!d) return <Spinner />;
 
-  // Sales recorded but no payroll accrued means rent/salaries are missing from the
-  // maths, so "profit" and "margin" are overstated. Don't dress them up as good news.
-  const costsIncomplete = d.sales_total_rupees > 0 && (d.payroll_accrual_rupees ?? 0) === 0;
-  const costsNote = "payroll not run — real profit is lower";
+  // Older servers did not publish the shared financial-completeness result.
+  // Keep their conservative payroll fallback while preferring the full rule.
+  const profitKnown = d.profit_known ?? !(
+    d.sales_total_rupees > 0 && (d.payroll_accrual_rupees ?? 0) === 0
+  );
+  const costsIncomplete = !profitKnown;
+  const costsNote = d.profit_unknown_reason ??
+    "Costs are incomplete — profit and margin are not shown.";
+  const marginSales = d.sales_net_rupees ?? d.sales_total_rupees;
+
+  // Expenses plotted against a sales axis flatten into a straight line when
+  // sales dwarf them, which reads as "we spend nothing". Give expenses their
+  // own labelled axis once the gap is wide enough to mislead.
+  const trend: any[] = d.trend ?? [];
+  const maxSales = Math.max(0, ...trend.map((t: any) => t.total_rupees ?? 0));
+  const maxExpense = Math.max(0, ...trend.map((t: any) => t.expense_rupees ?? 0));
+  const splitAxes = maxExpense > 0 && maxSales / maxExpense >= 4;
 
   return (
     <div className="space-y-5">
@@ -53,19 +69,18 @@ export default function Reports() {
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {me?.role === "owner" && me.outlet_ids.length > 1 && (
-            <button onClick={() => setScopeAll(!scopeAll)}
-              className={`min-h-11 rounded-md border px-2.5 py-1.5 font-medium sm:min-h-0 ${scopeAll ? "border-accent bg-accent-soft text-accent" : "border-rule-strong"}`}>
+            <Button variant="outline" size="sm" onClick={() => setScopeAll(!scopeAll)}
+              aria-pressed={scopeAll}
+              className={scopeAll ? "border-accent bg-accent-soft text-accent" : ""}>
               All outlets
-            </button>
+            </Button>
           )}
-          <button className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-rule-strong px-2 py-1 sm:min-h-0 sm:min-w-0"
-                  aria-label="Previous month"
-                  onClick={() => setMonthOffset(monthOffset - 1)}>‹</button>
+          <Button variant="outline" size="sm" aria-label="Previous month"
+                  onClick={() => setMonthOffset(monthOffset - 1)}>‹</Button>
           <span className="min-w-[5.5rem] px-1 text-center font-medium">{monthLabelShort(month)}</span>
-          <button disabled={monthOffset >= 0}
+          <Button variant="outline" size="sm" disabled={monthOffset >= 0}
                   aria-label="Next month"
-                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-rule-strong px-2 py-1 disabled:opacity-40 sm:min-h-0 sm:min-w-0"
-                  onClick={() => setMonthOffset(monthOffset + 1)}>›</button>
+                  onClick={() => setMonthOffset(monthOffset + 1)}>›</Button>
         </div>
       </header>
 
@@ -89,7 +104,8 @@ export default function Reports() {
                   value={inr(Math.round((d.avg_day_rupees ?? 0) * 100))}
                   sub={`${d.days_recorded} days recorded`} />
         {me?.role === "owner" ? (
-          <StatTile label="Profit estimate" value={inr(Math.round((d.profit_rupees ?? 0) * 100))}
+          <StatTile label="Profit estimate"
+                    value={profitKnown ? inr(Math.round(d.profit_rupees * 100)) : "—"}
                     tone={costsIncomplete ? undefined : profitTone(d.profit_rupees, d.days_recorded)}
                     sub={costsIncomplete ? costsNote
                          : d.best_day ? `best: ${fmtDateShort(d.best_day.date)} · ${inr(Math.round(d.best_day.total_rupees * 100))}` : undefined} />
@@ -111,8 +127,8 @@ export default function Reports() {
                           : (d.cash_variance_rupees ?? 0) === 0 ? "good" : "bad"} />
           <StatTile label="Net margin"
                     sub={costsIncomplete ? costsNote : "sales − expenses − payroll − losses"}
-                    value={d.sales_total_rupees > 0
-                      ? `${Math.round(((d.profit_rupees ?? 0) / d.sales_total_rupees) * 100)}%`
+                    value={profitKnown && marginSales > 0
+                      ? `${Math.round((d.profit_rupees / marginSales) * 100)}%`
                       : "—"}
                     tone={costsIncomplete ? undefined : profitTone(d.profit_rupees, d.days_recorded)} />
         </div>
@@ -120,48 +136,95 @@ export default function Reports() {
 
       {/* Trend: sales vs expenses */}
       <Card className="p-4">
-        <SectionLabel>Daily sales vs expenses</SectionLabel>
+        <SectionLabel as="h2" id="daily-sales-expenses-heading">Daily sales vs expenses</SectionLabel>
         {(d.trend ?? []).length === 0 ? (
           <p className="py-10 text-center text-sm text-ink-faint">
             No days recorded in {monthLabel(month)}.
           </p>
         ) : (
-        <div className="mt-3 h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={d.trend} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
-              <XAxis dataKey="date" tickFormatter={fmtDateShort} tick={{ fontSize: 11 }}
-                     tickLine={false} axisLine={{ stroke: "#E7E0D8" }} interval="preserveStartEnd" />
-              <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
-                     tickFormatter={(v: any) => v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)} />
-              <Tooltip formatter={(v: any, name: any) =>
-                    [`₹${Number(v).toLocaleString("en-IN")}`, name === "total_rupees" ? "Sales" : "Expenses"]}
-                       labelStyle={{ color: "#57534E" }}
-                       contentStyle={{ background: "#FAF7F2", border: "1px solid #E7E0D8", borderRadius: 8 }} />
-              <Area type="monotone" dataKey="total_rupees" stroke="#C2410C" strokeWidth={2}
-                    fill="#C2410C" fillOpacity={0.08} />
-              <Area type="monotone" dataKey="expense_rupees" stroke="#B91C1C" strokeWidth={1.5}
-                    fill="#B91C1C" fillOpacity={0.06} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+          <figure aria-labelledby="daily-sales-expenses-heading"
+                  aria-describedby="daily-sales-expenses-summary">
+            <ul aria-label="Trend legend" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-soft">
+              <li className="flex items-center gap-1.5">
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-accent" />
+                Sales{splitAxes ? " (left axis)" : ""}
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-bad" />
+                Expenses{splitAxes ? " (right axis)" : ""}
+              </li>
+            </ul>
+            <div aria-hidden="true" className="mt-2 h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={d.trend} accessibilityLayer={false}
+                           margin={{ top: 4, right: splitAxes ? 0 : 4, bottom: 0, left: -18 }}>
+                  <XAxis dataKey="date" tickFormatter={fmtDateShort} tick={{ fontSize: 11, fill: "#57534E" }}
+                         tickLine={false} axisLine={{ stroke: "#E7E0D8" }} interval="preserveStartEnd" />
+                  <YAxis yAxisId="sales" tick={{ fontSize: 11, fill: "#57534E" }} tickLine={false} axisLine={false}
+                         tickFormatter={kTick} />
+                  {splitAxes && (
+                    <YAxis yAxisId="expenses" orientation="right" width={34}
+                           tick={{ fontSize: 11, fill: "#57534E" }} tickLine={false} axisLine={false}
+                           tickFormatter={kTick} />
+                  )}
+                  <Tooltip formatter={(v: any, name: any) =>
+                        [`₹${Number(v).toLocaleString("en-IN")}`, name === "total_rupees" ? "Sales" : "Expenses"]}
+                           labelStyle={{ color: "#57534E" }}
+                           itemStyle={{ color: "#1C1917" }} contentStyle={{ background: "#FAF7F2", border: "1px solid #E7E0D8", borderRadius: 8 }} />
+                  <Area yAxisId="sales" type="monotone" dataKey="total_rupees" stroke="#C2410C" strokeWidth={2}
+                        fill="#C2410C" fillOpacity={0.08} />
+                  <Area yAxisId={splitAxes ? "expenses" : "sales"} type="monotone" dataKey="expense_rupees"
+                        stroke="#B91C1C" strokeWidth={1.5} fill="#B91C1C" fillOpacity={0.06} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            <figcaption id="daily-sales-expenses-summary" className="mt-2 text-xs text-ink-faint">
+              Sales and expenses for {d.trend.length} recorded day{d.trend.length === 1 ? "" : "s"}.
+              {splitAxes
+                ? " Sales are much larger than expenses, so each line has its own labelled axis" +
+                  " — the two scales differ, and the exact figures are in the table below."
+                : " Both lines share one rupee scale."}
+            </figcaption>
+            <details className="mt-2 border-t border-rule pt-2 text-xs text-ink-soft">
+              <summary className="font-medium text-ink">Daily sales and expense values</summary>
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-left">
+                  <caption className="sr-only">Daily sales and expense values</caption>
+                  <thead className="border-b border-rule text-ink-faint">
+                    <tr><th className="py-1 font-medium">Date</th><th className="py-1 text-right font-medium">Sales</th><th className="py-1 text-right font-medium">Expenses</th></tr>
+                  </thead>
+                  <tbody>
+                    {d.trend.map((day: any) => (
+                      <tr key={day.date} className="border-b border-rule/60 last:border-0">
+                        <td className="py-1">{fmtDateShort(day.date)}</td>
+                        <td className="num py-1 text-right">{inr(Math.round(day.total_rupees * 100))}</td>
+                        <td className="num py-1 text-right">{inr(Math.round(day.expense_rupees * 100))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </figure>
         )}
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2">
         {/* Payment mix */}
-        <Card className="p-4">
-          <SectionLabel>How money came in</SectionLabel>
-          <div className="mt-2 space-y-1.5">
+        <Card className="min-w-0 p-4">
+          <SectionLabel as="h2" id="payment-mix-heading">How money came in</SectionLabel>
+          <div className="mt-2 space-y-2.5 sm:space-y-1.5">
             {d.modes.map((m: any) => (
-              <div key={m.kind} className="flex items-center gap-2 text-sm">
-                <span className="w-24 capitalize text-ink-soft">{m.kind}</span>
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-paper-3">
+              <div key={m.kind}
+                   className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm sm:flex-nowrap">
+                <span className="min-w-0 flex-1 truncate capitalize text-ink-soft sm:w-24 sm:flex-none">{m.kind}</span>
+                <span className="num shrink-0 text-right font-medium sm:order-last sm:w-24">
+                  {inr(Math.round(m.net_rupees * 100))}
+                </span>
+                <div className="h-2 w-full basis-full overflow-hidden rounded-full bg-paper-3 sm:w-auto sm:min-w-0 sm:flex-1 sm:basis-auto">
                   <div className="h-full rounded-full bg-accent/70"
                        style={{ width: `${pct(m.net_rupees, d.modes)}%` }} />
                 </div>
-                <span className="num w-24 text-right font-medium">
-                  {inr(Math.round(m.net_rupees * 100))}
-                </span>
               </div>
             ))}
             {d.modes.length === 0 && <p className="py-4 text-center text-sm text-ink-faint">No sales this month.</p>}
@@ -175,36 +238,64 @@ export default function Reports() {
         </Card>
 
         {/* Expense donut */}
-        <Card className="p-4">
-          <SectionLabel>Where expenses went</SectionLabel>
+        <Card className="min-w-0 p-4">
+          <SectionLabel as="h2" id="expense-breakdown-heading">Where expenses went</SectionLabel>
           {d.expense_donut.length === 0 ? (
             <p className="py-6 text-center text-sm text-ink-faint">No expenses this month.</p>
           ) : (
-            <div className="mt-2 flex items-center gap-3">
-              <ResponsiveContainer width={140} height={140}>
-                <PieChart>
-                  <Pie data={d.expense_donut} dataKey="rupees" nameKey="name"
-                       innerRadius={42} outerRadius={64} paddingAngle={2}
-                       stroke="#FAF7F2">
-                    {d.expense_donut.map((_: any, i: number) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v: any) => `₹${Number(v).toLocaleString("en-IN")}`}
-                           contentStyle={{ background: "#FAF7F2", border: "1px solid #E7E0D8", borderRadius: 8 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <ul className="min-w-0 flex-1 space-y-0.5 overflow-hidden text-xs">
-                {d.expense_donut.slice(0, 6).map((e: any, i: number) => (
-                  <li key={i} className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                    <span className="truncate">{e.name}</span>
-                    <span className="num ml-auto shrink-0 font-medium">₹{e.rupees.toLocaleString("en-IN")}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <figure aria-labelledby="expense-breakdown-heading"
+                    aria-describedby="expense-breakdown-summary">
+              <div className="mt-2 flex items-center gap-3">
+                <div aria-hidden="true" className="shrink-0">
+                <ResponsiveContainer width={140} height={140}>
+                  <PieChart accessibilityLayer={false}>
+                    <Pie data={d.expense_donut} dataKey="rupees" nameKey="name"
+                         rootTabIndex={-1}
+                         innerRadius={42} outerRadius={64} paddingAngle={2}
+                         stroke="#FAF7F2">
+                      {d.expense_donut.map((_: any, i: number) => (
+                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: any) => `₹${Number(v).toLocaleString("en-IN")}`}
+                             itemStyle={{ color: "#1C1917" }} contentStyle={{ background: "#FAF7F2", border: "1px solid #E7E0D8", borderRadius: 8 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                </div>
+                <ul className="min-w-0 flex-1 space-y-0.5 overflow-hidden text-xs">
+                  {d.expense_donut.slice(0, 6).map((e: any, i: number) => (
+                    <li key={i} className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                      <span className="truncate">{e.name}</span>
+                      <span className="num ml-auto shrink-0 font-medium">₹{e.rupees.toLocaleString("en-IN")}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <figcaption id="expense-breakdown-summary" className="mt-2 text-xs text-ink-faint">
+                {d.expense_donut.length} expense categor{d.expense_donut.length === 1 ? "y" : "ies"} recorded.
+              </figcaption>
+              <details className="mt-2 border-t border-rule pt-2 text-xs text-ink-soft">
+                <summary className="font-medium text-ink">Expense breakdown values</summary>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-left">
+                    <caption className="sr-only">Expense breakdown values</caption>
+                    <thead className="border-b border-rule text-ink-faint">
+                      <tr><th className="py-1 font-medium">Category</th><th className="py-1 text-right font-medium">Amount</th></tr>
+                    </thead>
+                    <tbody>
+                      {d.expense_donut.map((expense: any) => (
+                        <tr key={expense.name} className="border-b border-rule/60 last:border-0">
+                          <td className="py-1">{expense.name}</td>
+                          <td className="num py-1 text-right">{inr(Math.round(expense.rupees * 100))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </figure>
           )}
         </Card>
       </div>
@@ -212,7 +303,7 @@ export default function Reports() {
       {/* Cash gaps (owner only) */}
       {me?.role === "owner" && (
         <Card className="px-4 py-3.5">
-          <SectionLabel>Cash discipline</SectionLabel>
+          <SectionLabel as="h2" id="cash-discipline-heading">Cash discipline</SectionLabel>
           {d.cash_gap_days.length === 0 ? (
             d.days_recorded === 0
               ? <p className="mt-1 text-sm text-ink-soft">No days closed yet, so there is nothing to check.</p>
@@ -283,7 +374,7 @@ function InsightCards({ outletId, month, daysRecorded }:
       {!fc.isLoading && fc.data && (
         <Card className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <SectionLabel>Month forecast</SectionLabel>
+            <SectionLabel as="h2" id="month-forecast-heading">Month forecast</SectionLabel>
             <Badge tone={fc.data.projected_rupees == null ? "neutral"
                           : fc.data.on_track === undefined ? "neutral"
                           : fc.data.on_track ? "good" : "warn"}>
@@ -334,11 +425,11 @@ function InsightCards({ outletId, month, daysRecorded }:
           )}
           {me?.role === "owner" && (
             <div className="mt-2.5 flex items-center gap-1.5">
-              <input inputMode="decimal" placeholder="Set monthly target ₹"
+              <Input size="compact" inputMode="decimal" placeholder="Set monthly target ₹"
                      value={targetInput} onChange={(e) => setTargetInput(e.target.value)}
                      onKeyDown={(e) => e.key === "Enter" && Number(targetInput) > 0
                        && !setTarget.isPending && setTarget.mutate()}
-                     className="w-40 rounded-md border border-rule-strong bg-paper px-2 py-1 num text-sm" />
+                     className="!w-40" />
               <Button size="sm" variant="ghost"
                       disabled={!(Number(targetInput) > 0) || setTarget.isPending}
                       onClick={() => setTarget.mutate()}>
@@ -356,7 +447,7 @@ function InsightCards({ outletId, month, daysRecorded }:
       {/* Anomalies */}
       {!an.isLoading && (
         <Card className="p-4">
-          <SectionLabel>Watch-outs this month</SectionLabel>
+          <SectionLabel as="h2" id="monthly-watch-outs-heading">Watch-outs this month</SectionLabel>
           {(an.data ?? []).length === 0 ? (
             daysRecorded === 0
               ? <p className="mt-1 text-sm text-ink-soft">Nothing logged this month yet.</p>
@@ -378,25 +469,28 @@ function InsightCards({ outletId, month, daysRecorded }:
       {!bg.isLoading && (bg.data ?? []).length > 0 && (
         <Card className="p-4 lg:col-span-2">
           <div className="flex items-center justify-between">
-            <SectionLabel>Category budgets</SectionLabel>
+            <SectionLabel as="h2" id="category-budgets-heading">Category budgets</SectionLabel>
             {me?.role !== "owner" && <span className="text-xs text-ink-faint">set by owner</span>}
           </div>
-          <div className="mt-2 space-y-1.5">
+          <div className="mt-2 space-y-2.5 sm:space-y-1.5">
             {(bg.data ?? []).map((b: any) => (
-              <div key={b.category_id} className="flex items-center gap-2 text-sm">
-                <span className="w-36 shrink-0 truncate text-ink-soft">{b.category}</span>
-                <div className={`h-2 flex-1 overflow-hidden rounded-full ${b.over ? "bg-bad/15" : "bg-paper-3"}`}>
+              <div key={b.category_id}
+                   className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm sm:flex-nowrap">
+                <span className="min-w-0 flex-1 truncate text-ink-soft sm:w-36 sm:flex-none">{b.category}</span>
+                <span className="num shrink-0 text-right sm:order-3 sm:w-32">
+                  {inr(Math.round(b.used_rupees * 100))} / {inr(Math.round(b.budget_rupees * 100))}
+                </span>
+                <span className="shrink-0 sm:order-4">
+                  <Badge tone={b.over ? "bad" : b.percent_used > 80 ? "warn"
+                                : b.used_rupees > 0 ? "good" : "neutral"}>
+                    {b.percent_used}%
+                  </Badge>
+                </span>
+                <div className={`h-2 w-full basis-full overflow-hidden rounded-full sm:order-2 sm:w-auto sm:min-w-0 sm:flex-1 sm:basis-auto ${b.over ? "bg-bad/15" : "bg-paper-3"}`}>
                   <div className={`h-full rounded-full ${b.over ? "bg-bad" :
                         b.percent_used > 80 ? "bg-amber-500" : "bg-good"}`}
                        style={{ width: `${Math.min(100, b.percent_used)}%` }} />
                 </div>
-                <span className="num w-32 shrink-0 text-right">
-                  {inr(Math.round(b.used_rupees * 100))} / {inr(Math.round(b.budget_rupees * 100))}
-                </span>
-                <Badge tone={b.over ? "bad" : b.percent_used > 80 ? "warn"
-                              : b.used_rupees > 0 ? "good" : "neutral"}>
-                  {b.percent_used}%
-                </Badge>
               </div>
             ))}
           </div>
@@ -406,7 +500,7 @@ function InsightCards({ outletId, month, daysRecorded }:
       {!be.isLoading && be.data && (
         <Card className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <SectionLabel>Break-even</SectionLabel>
+            <SectionLabel as="h2" id="break-even-heading">Break-even</SectionLabel>
             <Badge tone={be.data.coverage_percent == null ? "neutral"
                           // A month with no rent or salaries recorded always
                           // clears its "break-even", so a green tick there is
@@ -460,8 +554,11 @@ function InsightCards({ outletId, month, daysRecorded }:
       {/* Outlet benchmark */}
       {multiOutlet && !bm.isLoading && (bm.data ?? []).length > 1 && (
         <Card className="p-4 lg:col-span-2">
-          <SectionLabel>Outlet comparison · contribution before payroll</SectionLabel>
-          <div className="mt-2 overflow-x-auto">
+          <SectionLabel as="h2" id="outlet-comparison-heading">Outlet comparison · contribution before payroll</SectionLabel>
+          {/* A scroll container must be keyboard reachable (WCAG 2.1.1). */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+          <div role="region" tabIndex={0} aria-label="Outlet comparison table, scrollable sideways"
+               className="mt-2 max-w-full overflow-x-auto rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
             <table className="w-full min-w-[34rem] text-sm">
               <thead>
                 <tr className="border-b border-rule text-xs uppercase tracking-wide text-ink-faint">
@@ -554,6 +651,7 @@ function ScenarioPanel({ outletId, month }: { outletId: number; month: string })
   const [expenses, setExpenses] = useState("0");
   const [payroll, setPayroll] = useState("0");
   const [result, setResult] = useState<any>(null);
+  const [err, setErr] = useState("");
   const run = useMutation({
     mutationFn: () => api.post("/insights/scenario", {
       outlet_id: outletId, month,
@@ -561,8 +659,18 @@ function ScenarioPanel({ outletId, month }: { outletId: number; month: string })
       expense_change_percent: Number(expenses),
       payroll_change_rupees: Number(payroll),
     }),
-    onSuccess: setResult,
+    onSuccess: (data) => { setErr(""); setResult(data); },
+    onError: (e: any) => setErr(e?.message || "Couldn't calculate this scenario."),
   });
+  const calculate = () => {
+    const values = [sales, expenses, payroll];
+    if (values.some((value) => !value.trim() || !Number.isFinite(Number(value)))) {
+      setErr("Enter a finite number in every scenario field.");
+      return;
+    }
+    setErr("");
+    run.mutate();
+  };
   return (
     <Card className="p-4">
       <h2 className="font-semibold">What-if plan</h2>
@@ -570,21 +678,21 @@ function ScenarioPanel({ outletId, month }: { outletId: number; month: string })
         A local calculation over the forecast and recorded costs. It never changes the ledger.
       </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <label className="text-xs text-ink-soft">Sales change %
-          <input inputMode="decimal" value={sales} onChange={(e) => setSales(e.target.value)}
-                 className="mt-1 w-full rounded-md border border-rule-strong bg-paper px-2 py-1.5 num" />
+        <label htmlFor="scenario-sales" className="text-xs text-ink-soft">Sales change %
+          <Input id="scenario-sales" size="compact" inputMode="decimal" value={sales} onChange={(e) => setSales(e.target.value)}
+                 className="mt-1" />
         </label>
-        <label className="text-xs text-ink-soft">Expense change %
-          <input inputMode="decimal" value={expenses} onChange={(e) => setExpenses(e.target.value)}
-                 className="mt-1 w-full rounded-md border border-rule-strong bg-paper px-2 py-1.5 num" />
+        <label htmlFor="scenario-expenses" className="text-xs text-ink-soft">Expense change %
+          <Input id="scenario-expenses" size="compact" inputMode="decimal" value={expenses} onChange={(e) => setExpenses(e.target.value)}
+                 className="mt-1" />
         </label>
-        <label className="text-xs text-ink-soft">Payroll change ₹
-          <input inputMode="decimal" value={payroll} onChange={(e) => setPayroll(e.target.value)}
-                 className="mt-1 w-full rounded-md border border-rule-strong bg-paper px-2 py-1.5 num" />
+        <label htmlFor="scenario-payroll" className="text-xs text-ink-soft">Payroll change ₹
+          <Input id="scenario-payroll" size="compact" inputMode="decimal" value={payroll} onChange={(e) => setPayroll(e.target.value)}
+                 className="mt-1" />
         </label>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <Button size="sm" onClick={() => run.mutate()} disabled={run.isPending}>
+        <Button size="sm" onClick={calculate} disabled={run.isPending}>
           {run.isPending ? "Calculating…" : "Calculate scenario"}
         </Button>
         {result && (
@@ -596,6 +704,7 @@ function ScenarioPanel({ outletId, month }: { outletId: number; month: string })
           </span>
         )}
       </div>
+      {err && <div className="mt-3"><ErrorNote msg={err} /></div>}
       {result && <p className="mt-2 text-xs text-ink-faint">{result.note}</p>}
     </Card>
   );
@@ -612,6 +721,8 @@ function BeRow({ label, value }: { label: string; value: string }) {
 
 const pct = (v: number, all: any[]) =>
   Math.round((v / Math.max(1, Math.max(...all.map((x) => x.net_rupees)))) * 100);
+
+const kTick = (v: any) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v));
 
 /** Green means "you made money". A month with nothing in it made nothing, and
  *  an exact zero is not a win either - both should read as neutral. */

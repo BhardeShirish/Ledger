@@ -43,9 +43,16 @@ def read_sheet_rows(raw: bytes, *, sheet: str | None = None,
             raise HTTPException(422, "That workbook has no sheets.")
         worksheet = (book[sheet] if sheet and sheet in book.sheetnames
                      else book[book.sheetnames[0]])
-        if worksheet.max_row > max_rows or worksheet.max_column > max_cols:
+        row_count, column_count = worksheet.max_row, worksheet.max_column
+        if row_count is None or column_count is None:
             raise HTTPException(
-                422, f"{label} exceeds the {max_rows:,}-row / "
+                     422,
+                     "This workbook has an unreadable worksheet structure. Open it "
+                     "in Excel and save a new .xlsx copy before uploading it.",
+            )
+        if row_count > max_rows or column_count > max_cols:
+            raise HTTPException(
+                     422, f"{label} exceeds the {max_rows:,}-row / "
                      f"{max_cols}-column limit")
         return [list(r) for r in worksheet.iter_rows(values_only=True)]
     finally:

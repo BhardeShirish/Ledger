@@ -31,6 +31,7 @@ from ..costgroups import (
     BAND_LABELS, BANDS_DEFAULT, COGS_GROUPS, GROUPS, PRIME_GROUPS,
 )
 from ..db import get_db
+from ..financial_completeness import clean_band, effective_bands, financial_completeness
 from ..models import Employee, Expense, ExpenseCategory, SalesBill, SalesDaily, User
 from ..security import current_user, require_stepup
 from .advisor import by_severity
@@ -42,10 +43,6 @@ router = APIRouter(prefix="/pnl", tags=["pnl"])
 
 #: Above this, prime cost is not a warning, it is the whole problem.
 PRIME_DANGER = 65.0
-
-#: Below this share of the band's floor, a cost is not "efficient", it is
-#: missing. Half of the lowest healthy figure is generous.
-UNDERLOG_FRACTION = 0.5
 
 ROLLING_DAYS = 28
 
@@ -76,7 +73,7 @@ def _status(pct: float | None, band: list[float], *, logged: bool) -> str:
         return "over"
     if pct > hi:
         return "high"
-    if pct < lo * UNDERLOG_FRACTION or not logged:
+    if pct < lo * 0.5 or not logged:
         return "unlogged"
     if pct < lo:
         return "low"
@@ -208,37 +205,12 @@ def _today() -> str:
     return _today_date().isoformat()
 
 
-def _clean_band(value) -> list[float] | None:
-    """A band is a pair low < high inside 0-100, or it is not a band.
-
-    Anything else is rejected rather than repaired: a band decides whether
-    a cost reads 'healthy', and silently swapping a reversed pair would
-    hand the owner a verdict they never asked for.
-    """
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
-        return None
-    try:
-        lo, hi = float(value[0]), float(value[1])
-    except (TypeError, ValueError):
-        return None
-    if not (0 <= lo < hi <= 100):
-        return None
-    return [round(lo, 1), round(hi, 1)]
-
-
 def _bands(db: Session) -> dict[str, list[float]]:
     """The bands in force: the published defaults, overridden by whatever
     this shop saved. Sanitised on the way out as well as on the way in,
     so a hand-edited or downgraded setting can never take the report down
     with it."""
-    saved = get_setting_db(db, "pnl_bands", None)
-    out = {k: list(v) for k, v in BANDS_DEFAULT.items()}
-    if isinstance(saved, dict):
-        for key, value in saved.items():
-            band = _clean_band(value)
-            if key in BANDS_DEFAULT and band:
-                out[key] = band
-    return out
+    return effective_bands(db)
 
 
 @router.get("/bands")
@@ -267,7 +239,7 @@ def put_bands(body: dict, user: User = Depends(require_stepup),
         raise HTTPException(422, f"Not a P&L line: {', '.join(sorted(unknown))}")
     overrides: dict[str, list[float]] = {}
     for key, value in body.items():
-        band = _clean_band(value)
+        band = clean_band(value)
         if band is None:
             label = BAND_LABELS[key][0]
             raise HTTPException(
@@ -348,26 +320,17 @@ def summary(month: str | None = None, outlet_id: int | None = None,
     prime_band = bands.get("prime", BANDS_DEFAULT["prime"])
     cogs_pct = _pct(cogs_paise, net)
     prime_pct = _pct(prime_paise, net)
+    cogs_status = _status(
+        cogs_pct, cogs_band,
+        logged=any(groups[group]["entries"] for group in COGS_GROUPS),
+    )
 
     profit_paise = net - total_cost
-    quality = _quality(groups, pay, spend["staff_meals"], sales)
-    # "Logged" is not the same as "believable". A single ₹120 vegetable
-    # slip is an entry, but a food cost far under its band means the real
-    # buying is still on paper somewhere. _status already draws that line
-    # for the bands; contribution and per-bill food use the same line so
-    # the page cannot call a number good and rely on it in the same breath.
-    cogs_status = _status(cogs_pct, cogs_band,
-                          logged=any(groups[g]["entries"] for g in COGS_GROUPS))
-    cogs_ok = cogs_status != "unlogged"
-    # One exported source of truth, so the findings, the totals and the
-    # screen cannot disagree about what is known.
-    if not cogs_ok and GROUPS["cogs_food"][0] not in quality["missing_groups"]:
-        quality["missing_groups"].insert(0, GROUPS["cogs_food"][0])
-    quality["cogs_logged"] = cogs_ok
-    quality["costs_complete"] = complete = not quality["missing_groups"]
-    gap = ", ".join(quality["missing_groups"]) or "some costs"
-    unknown = (f"Not shown: nothing believable is logged for {gap}, so any "
-               "figure here would flatter you rather than inform you.")
+    financial = financial_completeness(groups, net_sales_paise=net, bands=bands)
+    quality = _quality(groups, pay, spend["staff_meals"], sales, financial)
+    cogs_ok = financial["cogs_logged"]
+    complete = financial["profit_known"]
+    unknown = financial["profit_unknown_reason"]
     facts = {
         "month": month,
         "period": {"start": lo, "end": end, "partial": partial,
@@ -397,6 +360,8 @@ def summary(month: str | None = None, outlet_id: int | None = None,
             "cost_percent_of_net": _pct(total_cost, net),
             "profit_known": complete,
             "profit_unknown_why": None if complete else unknown,
+            "profit_unknown_reason": unknown,
+            "missing_cost_groups": financial["missing_cost_groups"],
             "profit_rupees": _rupees(profit_paise) if complete else None,
             "profit_percent_of_net": _pct(profit_paise, net) if complete else None,
         },
@@ -411,6 +376,9 @@ def summary(month: str | None = None, outlet_id: int | None = None,
         "budgets": _budgets(db, outlets, groups),
     }
     facts["data_quality"] = quality
+    facts["profit_known"] = complete
+    facts["profit_unknown_reason"] = unknown
+    facts["missing_cost_groups"] = financial["missing_cost_groups"]
     facts["findings"] = _findings(facts)
     return facts
 
@@ -582,17 +550,15 @@ def _budgets(db: Session, outlets: list[int], groups: dict) -> list[dict]:
     return sorted(out, key=lambda b: -(b["used_percent"] or 0))
 
 
-def _quality(groups: dict, pay: dict, staff_meals: dict, sales: dict) -> dict:
-    missing = [GROUPS[g][0] for g in
-               ("cogs_food", "occupancy", "operating")
-               if groups[g]["entries"] == 0]
+def _quality(groups: dict, pay: dict, staff_meals: dict, sales: dict,
+             financial: dict) -> dict:
     # Salaries booked as an expense on top of the staff master would count
     # the wage bill twice and make labour look catastrophic.
     salary_cats = [
         name for name in groups["labour"]["categories"]
         if any(w in name.lower() for w in ("salar", "wage", "payroll"))]
     return {
-        "missing_groups": missing,
+        "missing_groups": financial["missing_cost_groups"],
         "payroll_from_staff_master": pay["period_paise"] > 0,
         "staff_meals_in_food_rupees": _rupees(staff_meals["paise"]),
         "staff_meal_entries": staff_meals["entries"],
@@ -601,8 +567,8 @@ def _quality(groups: dict, pay: dict, staff_meals: dict, sales: dict) -> dict:
         # Two gates that decide what this page is allowed to conclude.
         # A profit figure computed from costs nobody logged is not a
         # cautious estimate, it is a lie that reads as good news.
-        "costs_complete": not missing,
-        "cogs_logged": any(groups[g]["entries"] for g in COGS_GROUPS),
+        "costs_complete": financial["profit_known"],
+        "cogs_logged": financial["cogs_logged"],
     }
 
 

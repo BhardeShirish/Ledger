@@ -26,7 +26,7 @@ def test_reclosing_cannot_reduce_a_bank_reconciled_cash_close(client, outlet_id)
 
     response = client.post("/api/cash/close", json={
         "outlet_id": outlet_id, "date": today, "counted_rupees": 100,
-        "taken_home_rupees": 90,
+        "taken_home_rupees": 90, "note": "bank reconciliation",
     })
     assert response.status_code == 409
     assert "reconciled" in response.json()["detail"].lower()

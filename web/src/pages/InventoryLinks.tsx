@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
 import { useState } from "react";
+import { ArrowLeftRight } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth, useGuarded } from "../lib/auth";
 import {
-  Badge, Button, Card, EmptyState, ErrorNote, Input, SectionLabel, Spinner,
+  Badge, Button, Card, ConfirmSheet, EmptyState, ErrorNote, Input, SectionLabel, Spinner,
 } from "../components/ui";
 
 export default function InventoryLinks() {
@@ -17,6 +18,7 @@ export default function InventoryLinks() {
     queryFn: () => api.get(`/inventory/learn?outlet_id=${outletId}`),
   });
   const [coefEdit, setCoefEdit] = useState<Record<string, string>>({});
+  const [removing, setRemoving] = useState<any>(null);
 
   const decide = useMutation({
     mutationFn: (p: any) => {
@@ -26,7 +28,10 @@ export default function InventoryLinks() {
         coefficient: coef, status: p.status,
       }));
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inv-learn"] }),
+    onSuccess: () => {
+      setRemoving(null);
+      qc.invalidateQueries({ queryKey: ["inv-learn"] });
+    },
   });
 
   if (q.isLoading) return <Spinner />;
@@ -59,15 +64,15 @@ export default function InventoryLinks() {
             return (
               <div key={key} className="flex flex-wrap items-center gap-2 rounded-md border border-rule px-3 py-2 text-sm">
                 <span className="font-medium">{s.stock_item}</span>
-                <span className="text-ink-faint">↔</span>
+                <ArrowLeftRight size={14} aria-hidden="true" className="text-ink-faint" />
                 <span>{s.menu_item}</span>
                 <Badge tone={s.confidence === "stable" ? "good" : "warn"}>
                   {s.confidence} · {s.weeks_data}wks
                 </Badge>
                 <span className="num ml-auto">r={s.correlation}</span>
-                <Input inputMode="decimal" value={coefEdit[key] ?? String(s.coefficient)}
+                <Input size="compact" inputMode="decimal" value={coefEdit[key] ?? String(s.coefficient)}
                        onChange={(e) => setCoefEdit((x) => ({ ...x, [key]: e.target.value }))}
-                       className="!w-20 !py-1 text-right num text-xs"
+                       className="!w-20 text-right"
                        title="kg per plate — edit if you know better" />
                 <span className="text-xs text-ink-faint">per dish</span>
                 <Button size="sm" disabled={decide.isPending}
@@ -93,19 +98,15 @@ export default function InventoryLinks() {
             <div key={`${l.stock_item_id}-${l.menu_item}`}
                  className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-paper-3">
               <span className="font-medium">{l.stock_item}</span>
-              <span className="text-ink-faint">↔</span>
+              <ArrowLeftRight size={14} aria-hidden="true" className="text-ink-faint" />
               <span>{l.menu_item}</span>
               <span className="num ml-auto">{l.coefficient} per dish</span>
               <Badge tone={l.confidence === "stable" ? "good" : "warn"}>{l.confidence}</Badge>
-              <button className="text-xs text-bad hover:underline disabled:opacity-40"
+              <Button variant="ghost" size="sm" className="text-bad"
                       disabled={decide.isPending}
-                      onClick={() => confirm(
-                        `Remove the recipe link ${l.stock_item} ↔ ${l.menu_item}?`,
-                      ) && decide.mutate({
-                        stock_item_id: l.stock_item_id, menu_item: l.menu_item,
-                        coefficient: l.coefficient, status: "rejected"})}>
+                      onClick={() => setRemoving(l)}>
                 remove
-              </button>
+              </Button>
             </div>
           ))}
           {links.filter((l: any) => l.status === "confirmed").length === 0 && (
@@ -113,8 +114,24 @@ export default function InventoryLinks() {
           )}
         </div>
       </Card>
+      <ConfirmSheet
+        open={removing != null}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => {
+          if (removing) decide.mutate({
+            stock_item_id: removing.stock_item_id, menu_item: removing.menu_item,
+            coefficient: removing.coefficient, status: "rejected",
+          });
+        }}
+        title="Remove recipe link?"
+        description={removing
+          ? `Remove the recipe link between ${removing.stock_item} and ${removing.menu_item}?`
+          : ""}
+        confirmLabel="Remove link"
+        pending={decide.isPending}
+        pendingLabel="Removing…"
+      />
       <ErrorNote msg={decide.error?.message ?? ""} />
     </div>
   );
 }
-

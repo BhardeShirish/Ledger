@@ -2,6 +2,8 @@
 restaurant's books, so it gets its own checks."""
 import sqlite3
 from datetime import date
+from pathlib import Path
+from zipfile import ZipFile
 
 from app import backup as backup_mod
 
@@ -65,3 +67,48 @@ def test_partial_snapshot_is_not_left_behind(tmp_path, monkeypatch):
     _point_at(tmp_path, monkeypatch)
     backup_mod.run_daily_backup()
     assert not list((tmp_path / "backups").glob("*.partial"))
+
+
+def test_recovery_backup_is_complete_and_outside_data_directory(tmp_path, monkeypatch):
+    _point_at(tmp_path, monkeypatch)
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "receipt.jpg").write_bytes(b"receipt")
+    secret = tmp_path / "secret.key"
+    secret.write_text("stable-signing-key")
+    recovery = tmp_path / "Documents" / "Ledger Backups"
+    monkeypatch.setattr(backup_mod, "UPLOAD_DIR", uploads)
+    monkeypatch.setattr(backup_mod, "SECRET_KEY_FILE", secret)
+    monkeypatch.setattr(backup_mod, "RECOVERY_DIR", recovery)
+
+    made = backup_mod.run_recovery_backup()
+
+    assert made == recovery / f"ledger-recovery-{date.today().isoformat()}.zip"
+    assert made.exists()
+    with ZipFile(made) as archive:
+        assert {"ledger.db", "uploads/receipt.jpg", "secret.key", "README.txt"} <= set(archive.namelist())
+        restored = tmp_path / "restored.db"
+        restored.write_bytes(archive.read("ledger.db"))
+        assert archive.read("uploads/receipt.jpg") == b"receipt"
+        assert archive.read("secret.key") == b"stable-signing-key"
+    connection = sqlite3.connect(restored)
+    assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert connection.execute("SELECT COUNT(*) FROM money").fetchone()[0] == 3
+    connection.close()
+
+
+def test_recovery_backup_runs_once_per_day_and_prunes_old_archives(tmp_path, monkeypatch):
+    _point_at(tmp_path, monkeypatch)
+    recovery = tmp_path / "Documents" / "Ledger Backups"
+    recovery.mkdir(parents=True)
+    monkeypatch.setattr(backup_mod, "RECOVERY_DIR", recovery)
+    for day in range(1, 40):
+        (recovery / f"ledger-recovery-2020-01-{day:02d}.zip").write_bytes(b"old")
+
+    assert backup_mod.run_recovery_backup() is not None
+    assert backup_mod.run_recovery_backup() is None
+    archives = sorted(recovery.glob("ledger-recovery-*.zip"))
+    assert len(archives) == backup_mod.RECOVERY_KEEP_DAYS
+    assert Path(f"ledger-recovery-{date.today().isoformat()}.zip").name in {
+        archive.name for archive in archives
+    }

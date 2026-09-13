@@ -22,7 +22,7 @@ vi.mock("../lib/money", () => ({
 
 import { AddExpenseSheet } from "./ExpensesList";
 
-function show() {
+function show(onSubmitBulk = vi.fn()) {
   mocks.get.mockResolvedValue({ configured: false });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -31,7 +31,7 @@ function show() {
         open onClose={() => {}} outletId={1}
         cats={[{ id: 1, name: "Vegetables", is_active: true }]}
         vendors={[]} busy={false} err=""
-        onSubmit={() => {}} onSubmitBulk={() => {}} />
+        onSubmit={() => {}} onSubmitBulk={onSubmitBulk} />
     </QueryClientProvider>,
   );
 }
@@ -109,6 +109,24 @@ describe("expense item lines", () => {
     expect(screen.getByText("1 line")).toBeInTheDocument();
     await user.click(screen.getByText("＋ add line"));
     expect(screen.getByText("2 lines")).toBeInTheDocument();
+  });
+
+  it("keeps the bill open and explains when item lines exceed its total", async () => {
+    const user = userEvent.setup();
+    const onSubmitBulk = vi.fn();
+    show(onSubmitBulk);
+    await intoMultiItem(user);
+
+    await user.type(itemBoxes()[0], "Tomato");
+    await user.type(screen.getByLabelText("Amount for item 1"), "120");
+    await user.type(screen.getByLabelText("Printed bill total"), "100");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Item lines total ₹120.00, which exceeds the printed bill total.",
+    );
+    expect(screen.getByRole("button", { name: /Save bill/ })).toBeDisabled();
+    expect(itemBoxes()[0]).toHaveValue("Tomato");
+    expect(onSubmitBulk).not.toHaveBeenCalled();
   });
 });
 

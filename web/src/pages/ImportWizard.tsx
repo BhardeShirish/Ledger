@@ -6,7 +6,7 @@ import { api } from "../api/client";
 import { useGuarded } from "../lib/auth";
 import { fmtDateShort, inr } from "../lib/format";
 import {
-  Badge, Button, Card, ErrorNote, SectionLabel, Spinner,
+  Badge, Button, Card, ConfirmSheet, ErrorNote, SectionLabel, Spinner,
 } from "../components/ui";
 
 export default function ImportWizard() {
@@ -15,6 +15,7 @@ export default function ImportWizard() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<any>(null);
   const [err, setErr] = useState("");
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const guarded = useGuarded();
 
   const history = useQuery({
@@ -43,6 +44,16 @@ export default function ImportWizard() {
     },
     onError: (e: any) => setErr(e.message),
   });
+  const discard = useMutation({
+    mutationFn: () => api.del(`/imports/${result!.batch_id}`),
+    onSuccess: () => {
+      setConfirmDiscard(false);
+      setResult(null);
+      if (fileRef.current) fileRef.current.value = "";
+      qc.invalidateQueries({ queryKey: ["imports"] });
+    },
+    onError: (e: any) => setErr(e.message),
+  });
 
   return (
     <div className="space-y-5">
@@ -60,12 +71,22 @@ export default function ImportWizard() {
           className="flex cursor-pointer flex-col items-center justify-center gap-2 border-dashed py-12 hover:bg-paper-3/40"
           onDragOver={(e: any) => e.preventDefault()}
           onDrop={(e: any) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) upload.mutate(f); }}
-          onClick={() => fileRef.current?.click()}>
+          onClick={(e) => {
+            if (e.target !== fileRef.current
+                && !(e.target as HTMLElement).closest("[data-upload-control]")) {
+              fileRef.current?.click();
+            }
+          }}>
           <input ref={fileRef} type="file" hidden accept=".xlsx,.xls"
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); }} />
           <FileUp size={28} className="text-accent" />
           <div className="font-medium">Drop the Excel report here</div>
-          <div className="text-sm text-ink-faint">or tap to choose — .xlsx files only</div>
+          <div className="text-sm text-ink-faint">or choose a file — .xlsx files only</div>
+          <Button type="button" data-upload-control variant="outline"
+                  disabled={upload.isPending}
+                  onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
+            <FileUp size={15} /> Choose Excel file
+          </Button>
           {upload.isPending && <Spinner label="Reading the report…" />}
           <ErrorNote msg={err} />
         </Card>
@@ -106,12 +127,25 @@ export default function ImportWizard() {
 
             <ErrorNote msg={err} />
             <div className="flex justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={() => setResult(null)}>Discard</Button>
+              <Button variant="ghost" disabled={discard.isPending}
+                      onClick={() => setConfirmDiscard(true)}>
+                {discard.isPending ? "Discarding…" : "Discard"}
+              </Button>
               <Button onClick={() => commit.mutate()} disabled={commit.isPending}>
                 {commit.isPending ? "Importing…" : `Commit ${result.rows_ok} bills`}
               </Button>
             </div>
           </Card>
+          <ConfirmSheet
+            open={confirmDiscard}
+            onClose={() => setConfirmDiscard(false)}
+            onConfirm={() => discard.mutate()}
+            title="Discard validated import?"
+            description={"Discard this validated batch? Nothing has been added yet, but its preview and staged file will be removed. You will need to upload it again to commit these bills."}
+            confirmLabel="Discard batch"
+            pending={discard.isPending}
+            pendingLabel="Discarding…"
+          />
         </>
       )}
 
@@ -119,8 +153,9 @@ export default function ImportWizard() {
         <div className="border-b border-rule px-4 py-2.5"><SectionLabel>Past imports</SectionLabel></div>
         <div className="divide-y divide-rule">
           {(history.data ?? []).map((b: any) => {
-            // Committing an old batch replays every bill in it. If the same
-            // file already went in, that is a silent double-count.
+            // Committing a batch replaces the POS data for every date in it,
+            // so a re-commit of the same file is not a double-count — but it
+            // does delete bills missing from the file and reopen splits.
             const alreadyCommitted = (history.data ?? []).some(
               (o: any) => o.id !== b.id && o.filename === b.filename
                           && o.status === "committed");
@@ -134,8 +169,9 @@ export default function ImportWizard() {
                   </span>
                 )}
                 {b.status === "validated" && alreadyCommitted && (
-                  <span className="ml-2 text-xs text-bad">
-                    · this file was already committed
+                  <span className="ml-2 text-xs text-amber-800">
+                    · a file with this name is already committed — committing
+                    this one replaces those dates
                   </span>
                 )}
               </span>
@@ -165,27 +201,39 @@ function CommitRowButton({ batch, duplicate, onDone }: {
 }) {
   const guarded = useGuarded();
   const [err, setErr] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const c = useMutation({
     mutationFn: () => guarded(() => api.post(`/imports/${batch.id}/commit`)),
-    onSuccess: onDone,
+    onSuccess: () => {
+      setConfirming(false);
+      onDone();
+    },
     onError: (e: any) => setErr(e.message),
   });
-  const ask = () => {
-    const warn = duplicate
-      ? `\n\nA file with this name was ALREADY committed. Doing this again will count those bills twice.`
-      : "";
-    if (confirm(`Import ${batch.rows_ok} bills from "${batch.filename}"?${warn}`)) {
-      c.mutate();
-    }
-  };
+  const warn = duplicate
+    ? `\n\nA file with this name was already committed. Committing again does not count these bills twice: Ledger matches each bill by invoice number and replaces the imported sales for every date in this file. Bills on those dates that are missing from this file are deleted, the imported daily totals are rebuilt from what remains, and splits you already resolved on those dates go back to unresolved. Your manually entered sales are untouched.`
+    : "";
   return (
-    <span className="inline-flex items-center gap-2">
-      {err && <span className="text-xs text-bad">{err}</span>}
-      <button className={`underline ${duplicate ? "text-bad" : "text-accent"}`}
-              onClick={ask} disabled={c.isPending}>
-        {c.isPending ? "committing…" : "commit now"}
-      </button>
-    </span>
+    <>
+      <span className="inline-flex items-center gap-2">
+        {err && <span className="text-xs text-bad">{err}</span>}
+        <Button size="sm" variant={duplicate ? "danger" : "primary"}
+                onClick={() => setConfirming(true)} disabled={c.isPending}>
+          commit now
+        </Button>
+      </span>
+      <ConfirmSheet
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => c.mutate()}
+        title="Commit imported bills?"
+        description={`Import ${batch.rows_ok} bills from "${batch.filename}"?${warn}`}
+        confirmLabel="Commit now"
+        variant={duplicate ? "danger" : "primary"}
+        pending={c.isPending}
+        pendingLabel="Committing…"
+      />
+    </>
   );
 }
 
@@ -195,7 +243,7 @@ function Box({ label, value, tone, hint }: {
   return (
     <div className="rounded-md border border-rule bg-paper-2 px-3 py-2.5">
       <div className={`num text-2xl font-semibold ${tone === "good" ? "text-good"
-        : tone === "warn" ? "text-bad" : tone === "accent" ? "text-accent" : ""}`}>
+        : tone === "warn" ? "text-amber-800" : tone === "accent" ? "text-accent" : ""}`}>
         {value}
       </div>
       <div className="text-[11px] uppercase tracking-wide text-ink-faint">{label}</div>
