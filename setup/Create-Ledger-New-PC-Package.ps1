@@ -202,7 +202,8 @@ $output
 Size: $([math]::Round($archive.Length / 1MB, 1)) MB
 SHA-256: $hash
 
-Copy the ZIP to the other PC, extract it, and double-click Install-Ledger.cmd.
+Copy the ZIP to the other PC, use Extract All, then double-click the top-level
+Install-Ledger.cmd beside the Ledger folder.
 That PC keeps its database, uploads and logins; only the program is replaced.
 Ledger on THIS PC was not stopped and is unaffected.
 "@
@@ -217,7 +218,8 @@ SHA-256: $hash
 
 This ZIP contains no records, no uploads and no login key.
 Ledger on THIS PC was not stopped and is unaffected.
-On the other PC, extract it and double-click Install-Ledger.cmd.
+On the other PC, use Extract All, then double-click the top-level
+Install-Ledger.cmd beside the Ledger folder.
 It will ask you to choose a new owner password.
 "@
 } else {
@@ -230,7 +232,8 @@ Size: $([math]::Round($archive.Length / 1MB, 1)) MB
 SHA-256: $hash
 
 Ledger on this old PC is stopped. Copy the ZIP privately to the new laptop,
-extract it, and double-click Install-Ledger.cmd.
+use Extract All, then double-click the top-level Install-Ledger.cmd beside the
+Ledger folder.
 "@
 }
 Write-Host $summary -ForegroundColor Green

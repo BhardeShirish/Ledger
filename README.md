@@ -200,7 +200,12 @@ on the sign-in screen and in the browser tab.
 
 ### Windows
 
-One script does everything: `Install-Ledger.cmd`. Double-click it.
+For a **new PC**, first create a package on the working Ledger PC:
+`setup\Create-Package.cmd` → choose **3** → transfer `Ledger-New-PC.zip`.
+On the new PC, use **Extract All**, then double-click the top-level
+`Install-Ledger.cmd` beside the `Ledger` folder. Do not try to install from a
+GitHub download or copied source folder: it deliberately has no built
+`web\dist` screen bundle.
 
 It checks the machine before it changes anything — 64-bit Windows, a usable
 Python (and whether python.org is reachable if there is none), free disk space,
@@ -417,8 +422,10 @@ Run `.\setup\Create-Ledger-New-PC-Package.ps1` on the old PC. It stops Ledger,
 then builds `Ledger-New-PC.zip` with a consistent database snapshot, the
 receipts and the application. Transfer that ZIP privately, extract the whole
 of it on the new PC, and double-click the top-level `Install-Ledger.cmd` beside
-the `Ledger` folder — not the similarly named file under `setup`. Do not resume
-entering data on the old PC afterwards; the two databases do not synchronise.
+the `Ledger` folder — not the similarly named file under `setup`. A GitHub
+download or copied project folder cannot install on its own because it excludes
+the built `web\dist` files. Do not resume entering data on the old PC
+afterwards; the two databases do not synchronise.
 
 `-Fresh` builds `Ledger-Fresh-Install.zip` instead, carrying no records at all.
 

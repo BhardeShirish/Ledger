@@ -13,7 +13,11 @@ WHAT TO DO
 1. Copy this whole folder somewhere on the new PC, for example the Desktop.
    Do not run it from inside the ZIP.
 
-2. Double-click:  Install-Ledger.cmd
+2. Double-click the top-level:  Install-Ledger.cmd
+
+   It must be beside the Ledger folder you just extracted. Do not use a
+   similarly named file under setup, and do not use a GitHub/source-code
+   download: source code deliberately does not include the built web screen.
 
    It works out on its own whether this is a first installation or an
    update to a Ledger already on the PC. Windows may warn that the file

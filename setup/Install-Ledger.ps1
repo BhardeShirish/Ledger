@@ -198,8 +198,9 @@ Check "PowerShell 5 or newer" ($PSVersionTable.PSVersion.Major -ge 5) `
 # package keeps it beside the Ledger payload. Support both layouts without
 # searching outside the extracted package.
 $parent = Split-Path -Parent $PSScriptRoot
-if ((Split-Path -Leaf $PSScriptRoot) -ieq "setup" -and
-    (Test-Path -LiteralPath (Join-Path $parent "run_ledger.py") -PathType Leaf)) {
+$sourceCheckout = (Split-Path -Leaf $PSScriptRoot) -ieq "setup" -and
+    (Test-Path -LiteralPath (Join-Path $parent "run_ledger.py") -PathType Leaf)
+if ($sourceCheckout) {
     $appFolders = @($parent)
 } else {
     # The package must be extracted whole. Running the installer from inside a
@@ -218,9 +219,16 @@ $Source = if ($packageOk) { $appFolders[0] } else { $null }
 if ($Source) {
     $needed = @("server\requirements.txt", "server\app\main.py", "web\dist\index.html", "start.ps1")
     $missing = $needed | Where-Object { -not (Test-Path (Join-Path $Source $_)) }
+    $packageFix = if ($sourceCheckout -and $missing -contains "web\dist\index.html") {
+        "This is source code, not an install package. On the working Ledger PC, " +
+        "run setup\Create-Package.cmd and choose 3. Transfer the resulting " +
+        "Ledger-New-PC.zip, extract it, then run its top-level Install-Ledger.cmd."
+    } else {
+        "This ZIP is incomplete. Get a fresh copy of the package."
+    }
     Check "Package is complete" ($missing.Count -eq 0) `
         $(if ($missing) { "missing: $($missing -join ', ')" } else { "all program files present" }) `
-        "This ZIP is incomplete. Get a fresh copy of the package."
+        $packageFix
 }
 
 $python = Find-Python
