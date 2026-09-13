@@ -6,10 +6,10 @@
 # because they are the same job with different amounts of caution, and two
 # scripts drifted apart every time one of them was fixed.
 #
-# It runs in two phases. The first checks everything and changes nothing, so
-# that a missing prerequisite is a tidy list on screen rather than a half
-# installed Ledger. Only when every check passes does the second phase touch
-# this PC.
+# It runs in two phases. The first makes no lasting installation changes (it
+# creates and removes a temporary write-permission probe), so a missing
+# prerequisite is a tidy list on screen rather than a half-installed Ledger.
+# Only when every check passes does the second phase install Ledger on this PC.
 
 $ErrorActionPreference = "Stop"
 
@@ -73,15 +73,35 @@ function Get-PortHolder {
         -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $held) { return $null }
     $process = Get-Process -Id $held.OwningProcess -ErrorAction SilentlyContinue
+    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($held.OwningProcess)" `
+        -ErrorAction SilentlyContinue
     return [pscustomobject]@{
-        Pid  = $held.OwningProcess
-        Name = if ($process) { $process.ProcessName } else { "unknown" }
-        Path = if ($process) { $process.Path } else { $null }
+        Pid         = $held.OwningProcess
+        Name        = if ($process) { $process.ProcessName } else { "unknown" }
+        CommandLine = if ($processInfo) { $processInfo.CommandLine } else { "" }
     }
 }
 
+function Test-LedgerPortHolder($Holder) {
+    if (-not $Holder) { return $false }
+    $entrypoint = Join-Path $Target "run_ledger.py"
+    return $Holder.CommandLine -match [regex]::Escape($entrypoint)
+}
+
+function Get-OwnedLedgerTask {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if (-not $task) { return $null }
+    $definition = ($task.Actions | ForEach-Object {
+        "$($_.Execute) $($_.Arguments)"
+    }) -join "`n"
+    if ($definition -notmatch [regex]::Escape((Join-Path $Target "run_ledger.py"))) {
+        throw "A scheduled task named '$TaskName' does not point to this Ledger installation. It was not stopped."
+    }
+    return $task
+}
+
 function Stop-Ledger {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    if ($task = Get-OwnedLedgerTask) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     }
     $stop = Join-Path $Target "stop.ps1"
@@ -265,16 +285,16 @@ Check "Can start Ledger automatically" `
     ([bool](Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue)) "" `
     "This Windows edition has no Task Scheduler cmdlets, so Ledger cannot start by itself."
 
-# Port 8080: a foreign program holding it is fatal, but Ledger holding it is
-# ordinary - this is an update, and it gets stopped in phase 2.
+# A listener is safe to restart only when its command line proves it belongs
+# to this exact Ledger installation. Another Python service is still foreign.
 $installed  = Test-Path (Join-Path $Target "run_ledger.py")
 $holder     = Get-PortHolder
-$ourPort    = $holder -and $installed -and
-              ($holder.Path -like "*python*" -or $holder.Name -like "*python*")
-Check "Port $Port is available" (-not $holder -or $ourPort) `
+$ourPort    = $installed -and (Test-LedgerPortHolder $holder)
+$portAvailable = -not $holder -or $ourPort
+Check $(if ($portAvailable) { "Port $Port is available" } else { "Port $Port is unavailable" }) $portAvailable `
     $(if (-not $holder) { "nothing is using it" }
       elseif ($ourPort) { "Ledger is using it, and will be restarted" }
-      else { "held by $($holder.Name) (PID $($holder.Pid))" }) `
+      else { "held by $($holder.Name) (PID $($holder.Pid)); ownership could not be verified" }) `
     "Close the program using port $Port, then run this installer again."
 
 # ----------------------------------------------------------- the verdict
@@ -283,6 +303,11 @@ $targetDb   = Join-Path $Target "server\data\ledger.db"
 $packageDb  = if ($Source) { Join-Path $Source "server\data\ledger.db" } else { $null }
 $hasRecords = Test-Path $targetDb
 $packageHasRecords = $packageDb -and (Test-Path $packageDb)
+if (-not $installed -and $hasRecords) {
+    Check "Existing Ledger data is safe" $false `
+        "a database exists, but the installed program files are missing" `
+        "Do not install over it. Restore the missing program first, recover the data, or use Remove-Ledger-Data.cmd only if the old records are no longer needed."
+}
 
 $mode = if (-not $installed)            { "install" }
         elseif ($packageHasRecords)     { "replace" }

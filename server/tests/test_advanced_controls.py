@@ -94,6 +94,15 @@ def test_cash_reconciliation_and_vendor_aging(client, outlet_id):
     assert row["buckets"]["31_60"] == 10000
 
 
+def test_cash_reconciliation_names_the_missing_record(client):
+    _stepup(client)
+    match = client.post("/api/bank/cash-reconciliation/matches", json={
+        "closure_id": -1, "bank_credit_id": -1, "amount_rupees": 50,
+    })
+    assert match.status_code == 404
+    assert match.json()["detail"] == "Cash closure not found"
+
+
 def test_vendor_entries_reject_non_finite_amounts(client, outlet_id):
     vendor = client.post("/api/vendors", json={"name": "Finite amount vendor"}).json()
     today = date.today().isoformat()

@@ -75,7 +75,9 @@ function Remove-LedgerRecoveryArtifacts([string]$Directory) {
 
 $defaultTarget = Join-Path $env:LOCALAPPDATA "Ledger"
 $legacyTarget = Join-Path $env:LOCALAPPDATA "Ootaa Ledger"
-$targets = if ($env:LEDGER_HOME) { @($env:LEDGER_HOME) } else { @($defaultTarget, $legacyTarget) }
+$targets = @($defaultTarget, $legacyTarget)
+if ($env:LEDGER_HOME) { $targets += $env:LEDGER_HOME }
+$targets = @($targets | Select-Object -Unique)
 $oldCopies = @()
 foreach ($target in $targets) {
     $parent = Split-Path -Parent $target

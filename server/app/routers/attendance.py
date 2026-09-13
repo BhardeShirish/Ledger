@@ -110,12 +110,12 @@ def _serialize_row(row: Attendance, shift) -> dict:
 @router.get("/grid")
 def grid(outlet_id: int, start: str, end: str | None = None,
          user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Roster grid for a date range (≤31 days): employees × days with resolved shifts."""
+    """Roster grid for a date range (≤62 days): employees × days with resolved shifts."""
     assert_outlet_access(db, user, outlet_id)
     s = date.fromisoformat(start)
     e = date.fromisoformat(end or start)
     if (e - s).days > 62:
-        raise HTTPException(422, "Range too long")
+        raise HTTPException(422, "Date range cannot exceed 62 days")
     emps = (db.query(Employee)
               .filter(Employee.outlet_id == outlet_id,
                       Employee.working_status != "left",

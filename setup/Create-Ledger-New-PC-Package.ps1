@@ -4,7 +4,8 @@
   .PARAMETER Fresh
     Package the application with NO data: no database, uploads, imports or
     session key. The new PC starts an empty ledger and asks for a new owner
-    password during install. This PC is left running and untouched.
+    username and password during install. Ledger stays running and its data
+    are untouched; building the package may update local web dependencies.
   .PARAMETER Update
     Package the application code ONLY, to refresh a PC that already runs
     Ledger. The other PC keeps its database, uploads and logins.
@@ -213,7 +214,8 @@ SHA-256: $hash
 Copy the ZIP to the other PC, use Extract All, then double-click the top-level
 Install-Ledger.cmd beside the Ledger folder.
 That PC keeps its database, uploads and logins; only the program is replaced.
-Ledger on THIS PC was not stopped and is unaffected.
+Ledger on THIS PC stayed running and its data were not changed.
+Building the package may have updated local web dependencies.
 "@
 } elseif ($Fresh) {
 @"
@@ -225,7 +227,8 @@ Size: $([math]::Round($archive.Length / 1MB, 1)) MB
 SHA-256: $hash
 
 This ZIP contains no records, no uploads and no login key.
-Ledger on THIS PC was not stopped and is unaffected.
+Ledger on THIS PC stayed running and its data were not changed.
+Building the package may have updated local web dependencies.
 On the other PC, use Extract All, then double-click the top-level
 Install-Ledger.cmd beside the Ledger folder.
 It will ask you to create a new owner username and password.

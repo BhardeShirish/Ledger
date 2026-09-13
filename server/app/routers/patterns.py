@@ -61,13 +61,14 @@ def _scope(db: Session, user: User, outlet_id: int | None) -> list[int]:
 
 def _window(start: str | None, end: str | None) -> tuple[str, str]:
     hi = end or _today().isoformat()
-    lo = start or (date.fromisoformat(hi) - timedelta(days=89)).isoformat()
     try:
-        if date.fromisoformat(lo) > date.fromisoformat(hi):
+        hi_date = date.fromisoformat(hi)
+        lo_date = date.fromisoformat(start) if start else hi_date - timedelta(days=89)
+        if lo_date > hi_date:
             raise HTTPException(422, "start must fall on or before end")
     except ValueError:
         raise HTTPException(422, "dates must look like 2025-08-31")
-    return lo, hi
+    return lo_date.isoformat(), hi_date.isoformat()
 
 
 # ── when do people come, and what will next week look like ─────────────────

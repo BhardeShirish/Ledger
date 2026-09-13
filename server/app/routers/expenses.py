@@ -116,7 +116,7 @@ def create_bulk_expenses(body: BulkExpenseIn, user: User = Depends(current_user)
         raise HTTPException(422, "At least one item line with an amount is needed")
     line_amounts = [(line, paise(line.amount_rupees)) for line in clean_lines]
     if any(amount_paise <= 0 for _, amount_paise in line_amounts):
-        raise HTTPException(422, "Item line amounts must round to at least one paise")
+        raise HTTPException(422, "Item line amounts must round to at least 1 paisa")
     if any((ln.quantity or 0) > 0 for ln in clean_lines) and not body.vendor_id:
         raise HTTPException(422,
             "Quantity given without a vendor — pick who the bill is from so "

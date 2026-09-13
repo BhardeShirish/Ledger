@@ -23,9 +23,9 @@ hiding the guide.
 
 ### Daily checklist
 
-One loop for attendance, sales, expenses and cash close, collapsing to a
-*Step N of 5* pill once you are working. Missed days appear as catch-up work
-rather than silent zeroes.
+One loop for attendance, sales, expenses and cash close, with a running count
+of tasks still left. Missed days appear as catch-up work rather than silent
+zeroes.
 
 <p align="center">
   <a href="screenshots/01-home.png">

@@ -57,10 +57,14 @@ def test_renaming_a_channel_leaves_it_where_it_was(client):
 
 def test_a_channel_needs_a_real_name_and_kind(client):
     stepup(client)
-    assert client.post("/api/sales/channels",
-                       json={"name": "  ", "kind": "aggregator"}).status_code == 422
-    assert client.post("/api/sales/channels",
-                       json={"name": "Ok", "kind": "moonbeams"}).status_code == 422
+    blank = client.post("/api/sales/channels",
+                        json={"name": "  ", "kind": "aggregator"})
+    assert blank.status_code == 422
+    assert blank.json()["detail"] == "Channel name is required"
+    invalid_kind = client.post("/api/sales/channels",
+                               json={"name": "Ok", "kind": "moonbeams"})
+    assert invalid_kind.status_code == 422
+    assert invalid_kind.json()["detail"] == "Invalid channel kind: 'moonbeams'"
 
 
 # ── profile and password ────────────────────────────────────────────────────

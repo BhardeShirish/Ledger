@@ -384,7 +384,8 @@ def commit_batch(batch_id: int, body: CommitIn,
         .update({ImportBatch.status: "committing"}, synchronize_session=False)
     )
     if claimed != 1:
-        raise HTTPException(409, f"Batch is {batch.status}")
+        db.refresh(batch)
+        raise HTTPException(409, f"Batch is already {batch.status}")
     db.commit()
 
     try:
@@ -614,7 +615,11 @@ def add_cash_match(body: CashMatchIn, user: User = Depends(require_stepup),
         raise HTTPException(422, "Match amount must be positive")
     closure = db.get(DayClosure, body.closure_id)
     credit = db.get(BankCredit, body.bank_credit_id)
-    if closure is None or credit is None or closure.outlet_id != credit.outlet_id:
+    if closure is None:
+        raise HTTPException(404, "Cash closure not found")
+    if credit is None:
+        raise HTTPException(404, "Bank credit line not found")
+    if closure.outlet_id != credit.outlet_id:
         raise HTTPException(422, "Cash close and bank credit must belong to the same outlet")
     assert_outlet_access(db, user, closure.outlet_id)
     amount = int(round(body.amount_rupees * 100))
@@ -705,7 +710,8 @@ def discard_batch(batch_id: int, user: User = Depends(require_owner),
         .update({ImportBatch.status: "discarded"}, synchronize_session=False)
     )
     if changed != 1:
-        raise HTTPException(409, f"Batch is {batch.status}")
+        db.refresh(batch)
+        raise HTTPException(409, f"Batch is already {batch.status}")
     audit(db, None, user.id, "bank-import-discard",
           "import_batch", batch.id)
     db.commit()

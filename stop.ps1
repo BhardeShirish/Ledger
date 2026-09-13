@@ -40,12 +40,10 @@ if (Test-Path $pidFile) {
         Write-Host "Not running (stale pid file removed)."
         exit 0
     }
-    $isLedger = (
-        $process.CommandLine -like "*uvicorn*app.main:app*" -or
-        $process.CommandLine -like "*run_ledger.py*"
-    )
+    $entrypoint = Join-Path $root "run_ledger.py"
+    $isLedger = $process.CommandLine -match [regex]::Escape($entrypoint)
     if (-not $isLedger) {
-        Write-Host "PID $id belongs to another program, not Ledger; refusing to stop it."
+        Write-Host "PID $id does not belong to this Ledger installation; refusing to stop it."
         exit 1
     }
     Stop-Process -Id $id -Force -ErrorAction Stop

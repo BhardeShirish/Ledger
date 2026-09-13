@@ -43,6 +43,14 @@ def grid_cell(client, outlet_id, emp_id, day=TODAY):
     raise AssertionError(f"employee {emp_id} not in grid")
 
 
+def test_grid_explains_its_maximum_date_range(client, outlet_id):
+    r = client.get(
+        f"/api/attendance/grid?outlet_id={outlet_id}"
+        "&start=2026-01-01&end=2026-03-05")
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Date range cannot exceed 62 days"
+
+
 def bulk(client, outlet_id, entries, day=TODAY):
     return client.post("/api/attendance/bulk", json={
         "outlet_id": outlet_id, "date": day, "entries": entries})

@@ -139,10 +139,8 @@ if (Test-Path $pidFile) {
     $old = Get-Content $pidFile -ErrorAction SilentlyContinue
     if ($old) {
         $oldProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $old" -ErrorAction SilentlyContinue
-        $isLedger = $oldProcess -and (
-            $oldProcess.CommandLine -like "*uvicorn*app.main:app*" -or
-            $oldProcess.CommandLine -like "*run_ledger.py*"
-        )
+        $entrypoint = Join-Path $root "run_ledger.py"
+        $isLedger = $oldProcess -and $oldProcess.CommandLine -match [regex]::Escape($entrypoint)
         if ($isLedger) {
             Stop-Process -Id $old -Force -ErrorAction Stop
         }
@@ -165,14 +163,10 @@ if (Test-Path $secretFile) {
     $env:LEDGER_SECRET_KEY = "ledger-" + [System.Guid]::NewGuid().ToString("N")
     Set-Content -Path $secretFile -Value $env:LEDGER_SECRET_KEY -NoNewline
 }
-$env:LEDGER_OWNER_USER = if ($env:LEDGER_OWNER_USER) { $env:LEDGER_OWNER_USER } else { "owner" }
-if (-not $env:LEDGER_OWNER_PASSWORD) {
-    $bytes = New-Object byte[] 18
-    $rng = New-Object Security.Cryptography.RNGCryptoServiceProvider
-    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-    $env:LEDGER_OWNER_PASSWORD = [Convert]::ToBase64String($bytes)
+if ($firstRun -and (-not $env:LEDGER_OWNER_USER -or -not $env:LEDGER_OWNER_PASSWORD)) {
+    throw "No owner account exists. Run setup\Install-Ledger.cmd to create the first username and password."
 }
-$firstPassword = $env:LEDGER_OWNER_PASSWORD
+$env:LEDGER_OWNER_USER = if ($env:LEDGER_OWNER_USER) { $env:LEDGER_OWNER_USER } else { "owner" }
 $stdoutLog = Join-Path $dataDir "uvicorn.log"
 $stderrLog = Join-Path $dataDir "uvicorn-error.log"
 foreach ($log in @($stdoutLog, $stderrLog)) {
@@ -181,13 +175,9 @@ foreach ($log in @($stdoutLog, $stderrLog)) {
     }
 }
 
-if ($firstRun) {
-    Write-Host "First login: $($env:LEDGER_OWNER_USER) / $firstPassword -- save this password now." -ForegroundColor Yellow
-}
-
 $proc = Start-Process -PassThru -WindowStyle Hidden -FilePath $python `
-    -ArgumentList "-m","uvicorn","app.main:app","--host",$ledgerHost,"--port","$ledgerPort" `
-    -WorkingDirectory $server -RedirectStandardOutput $stdoutLog `
+    -ArgumentList "`"$(Join-Path $root 'run_ledger.py')`"","--host",$ledgerHost,"--port","$ledgerPort" `
+    -WorkingDirectory $root -RedirectStandardOutput $stdoutLog `
     -RedirectStandardError $stderrLog
 Set-Content -Path $pidFile -Value $proc.Id
 
@@ -235,6 +225,6 @@ try {
         Stop-Process -Id $proc.Id -Force
     }
     Remove-Item $pidFile -ErrorAction SilentlyContinue
-    Write-Host "Server did not come up - check port $ledgerPort or run: python -m uvicorn app.main:app --port $ledgerPort" -ForegroundColor Red
+    Write-Host "Server did not come up - check port $ledgerPort or run: python run_ledger.py --port $ledgerPort" -ForegroundColor Red
     exit 1
 }

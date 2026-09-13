@@ -229,6 +229,12 @@ def test_rejects_a_backwards_window(client):
     assert r.status_code == 422
 
 
+def test_rejects_a_malformed_end_date_without_a_server_error(client):
+    r = client.get("/api/patterns/bills?end=not-a-date")
+    assert r.status_code == 422
+    assert r.json()["detail"] == "dates must look like 2025-08-31"
+
+
 # ── purchases ───────────────────────────────────────────────────────────────
 
 def _cat(db, name):

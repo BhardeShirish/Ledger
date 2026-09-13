@@ -98,8 +98,10 @@ def channels(user: User = Depends(current_user), db: Session = Depends(get_db)):
 def add_channel(body: ChannelIn, user: User = Depends(require_owner),
                 db: Session = Depends(get_db)):
     name = body.name.strip()
-    if not name or body.kind not in CHANNEL_KINDS:
-        raise HTTPException(422, "Channel name and kind are required")
+    if not name:
+        raise HTTPException(422, "Channel name is required")
+    if body.kind not in CHANNEL_KINDS:
+        raise HTTPException(422, f"Invalid channel kind: {body.kind!r}")
     # A new channel goes after the existing ones rather than landing on a
     # shared default, where ties order themselves arbitrarily.
     sort = body.sort
@@ -122,8 +124,10 @@ def update_channel(channel_id: int, body: ChannelIn,
     if c is None:
         raise HTTPException(404, "Channel not found")
     name = body.name.strip()
-    if not name or body.kind not in CHANNEL_KINDS:
-        raise HTTPException(422, "Channel name and kind are required")
+    if not name:
+        raise HTTPException(422, "Channel name is required")
+    if body.kind not in CHANNEL_KINDS:
+        raise HTTPException(422, f"Invalid channel kind: {body.kind!r}")
     c.name = name
     c.kind = body.kind
     if body.sort is not None:

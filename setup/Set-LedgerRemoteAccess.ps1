@@ -326,7 +326,7 @@ if ($Action -eq "Setup") {
         Start-Sleep -Seconds 2
     }
     if (-not (Test-Path -LiteralPath $root)) {
-        throw "The proxy did not produce a certificate within a minute. Read the message in the window it opened."
+        throw "The proxy did not produce a certificate within a minute. Check Task Scheduler for 'Ledger Private HTTPS' and verify that its action belongs to this Ledger installation."
     }
     & $scriptPath -Action ExportCertificate -OwnerAuthorized
 

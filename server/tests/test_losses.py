@@ -93,9 +93,12 @@ def test_non_cash_kinds_never_touch_the_drawer(client, outlet_id):
             "outlet_id": outlet_id, "business_date": d, "kind": kind,
             "amount_rupees": 90})
         assert r.status_code == 200, r.text
-        assert client.post("/api/losses", json={
+        blocked = client.post("/api/losses", json={
             "outlet_id": outlet_id, "business_date": d, "kind": kind,
-            "amount_rupees": 90, "from_drawer": True}).status_code == 422
+            "amount_rupees": 90, "from_drawer": True})
+        assert blocked.status_code == 422
+        assert blocked.json()["detail"].endswith(
+            "Only cash-settled losses can be marked as taken from the drawer.")
     assert _expected(client, outlet_id, d)["expected_paise"] == before
 
 

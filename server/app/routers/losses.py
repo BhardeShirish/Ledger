@@ -114,10 +114,12 @@ def create(body: LossIn, user: User = Depends(current_user),
     if amount <= 0:
         raise HTTPException(422, "A loss must be more than zero")
     if body.from_drawer and not spec["cash_capable"]:
+        reason = ("A cash shortage already shows up as the day-close variance."
+                  if body.kind == "cash_short"
+                  else "Only cash-settled losses can be marked as taken from the drawer.")
         raise HTTPException(
             422,
-            f"'{spec['label']}' cannot be taken out of the drawer. A cash "
-            "shortage already shows up as the day-close variance.")
+            f"'{spec['label']}' cannot be taken out of the drawer. {reason}")
 
     row = DayLoss(outlet_id=body.outlet_id, business_date=body.business_date,
                   kind=body.kind, amount_paise=amount,

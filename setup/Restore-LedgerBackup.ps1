@@ -72,6 +72,9 @@ finally:
 if (-not $OwnerAuthorized -or -not $ConfirmRestore) {
     throw "Restoring replaces Ledger data. Re-run only as the owner with -OwnerAuthorized -ConfirmRestore."
 }
+if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $root) "Install-Ledger.cmd") -PathType Leaf) {
+    throw "This is an extracted setup package. Install Ledger first, then run this script from the installed Ledger folder."
+}
 if (-not (Test-Path -LiteralPath (Join-Path $root "run_ledger.py") -PathType Leaf)) {
     throw "Run this from the installed Ledger folder after reinstalling it. Do not restore into an extracted ZIP."
 }

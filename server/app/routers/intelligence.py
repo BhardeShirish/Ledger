@@ -303,7 +303,7 @@ def _build_brief(db: Session, user: User, outlet_id: int, as_of: date) -> dict:
         feed.append(_finding(
             finding_id="workforce.clock-gaps", kind="data_quality", bucket="improve_data",
             dimension="workforce", severity="warning", title="Open staff clocks weaken labour analysis",
-            detail=f"{len(clock_gaps)} recorded workday{'s' if len(clock_gaps) != 1 else ''} lack a clock-out time.",
+            detail=f"{len(clock_gaps)} recorded workday{'s lack' if len(clock_gaps) != 1 else ' lacks'} a clock-out time.",
             action=labour_source["action"], confidence="high",
         ))
     if overdue_payables:
@@ -384,7 +384,7 @@ def _build_brief(db: Session, user: User, outlet_id: int, as_of: date) -> dict:
         opportunities.append(_finding(
             finding_id="opportunity.low-stock", kind="opportunity", bucket="watch_this_week",
             dimension="inventory", severity="warning", title="Review evidence-backed reorder risks",
-            detail=f"{low_stock} tracked item{'s' if low_stock != 1 else ''} have sufficient recipe, sales, purchase, and count evidence for a reorder review.",
+            detail=f"{low_stock} tracked item{'s have' if low_stock != 1 else ' has'} sufficient recipe, sales, purchase, and count evidence for a reorder review.",
             action={"label": "Open order list", "href": "/inventory/order"}, confidence="high",
         ))
     for opportunity in menu_evidence["opportunities"]:
