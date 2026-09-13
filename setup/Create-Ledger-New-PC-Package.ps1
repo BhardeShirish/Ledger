@@ -71,7 +71,13 @@ foreach ($required in ($rootFiles + $remoteFiles + $recoveryFiles + $transferNot
 Write-Host "Building the web UI so the package cannot ship a stale screen..." -ForegroundColor Cyan
 Push-Location (Join-Path $root "web")
 try {
-    if (-not (Test-Path "node_modules")) { & npm ci --no-audit --no-fund }
+    if (-not (Test-Path "node_modules")) {
+        if (Test-Path "package-lock.json") {
+            & npm ci --no-audit --no-fund
+        } else {
+            & npm install --no-audit --no-fund
+        }
+    }
     & npm run build
     if ($LASTEXITCODE -ne 0) { throw "The web UI build failed, so no package was created." }
 } finally {

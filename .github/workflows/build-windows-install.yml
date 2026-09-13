@@ -1,0 +1,35 @@
+name: Build Windows install package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install web build dependencies
+        working-directory: web
+        run: npm install --no-audit --no-fund
+
+      - name: Build fresh Windows install package
+        shell: pwsh
+        run: .\setup\Create-Ledger-New-PC-Package.ps1 -Fresh
+
+      - name: Upload ready-to-install ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ledger-Fresh-Install
+          path: Ledger-Fresh-Install.zip
+          if-no-files-found: error
+          retention-days: 30

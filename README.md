@@ -200,12 +200,26 @@ on the sign-in screen and in the browser tab.
 
 ### Windows
 
-For a **new PC**, first create a package on the working Ledger PC:
-`setup\Create-Package.cmd` → choose **3** → transfer `Ledger-New-PC.zip`.
-On the new PC, use **Extract All**, then double-click the top-level
-`Install-Ledger.cmd` beside the `Ledger` folder. Do not try to install from a
-GitHub download or copied source folder: it deliberately has no built
-`web\dist` screen bundle.
+#### Installing a fresh Ledger from GitHub
+
+Do **not** use **Code → Download ZIP**: that is source code and deliberately
+has no built `web\dist` screen bundle. Instead:
+
+1. Open [Actions → Build Windows install package](../../actions/workflows/build-windows-install.yml).
+2. Open the newest successful run for `main`.
+3. Under **Artifacts**, download **Ledger-Fresh-Install**.
+4. Extract it with Windows **Extract All**, then double-click the top-level
+   `Install-Ledger.cmd` beside the `Ledger` folder.
+
+This package is a brand-new, empty Ledger. It contains no restaurant records,
+receipt images, passwords, or login keys.
+
+#### Moving an existing Ledger to a new PC
+
+On the working Ledger PC, run `setup\Create-Package.cmd` → choose **3** →
+transfer the generated `Ledger-New-PC.zip` privately. On the new PC, use
+**Extract All**, then double-click the top-level `Install-Ledger.cmd` beside
+the `Ledger` folder.
 
 It checks the machine before it changes anything — 64-bit Windows, a usable
 Python (and whether python.org is reachable if there is none), free disk space,
