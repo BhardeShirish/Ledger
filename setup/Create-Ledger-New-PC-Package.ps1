@@ -45,7 +45,9 @@ $rootFiles = @("start.ps1", "stop.ps1", "Start-Ledger.cmd",
 $remoteFiles = @("setup\Set-LedgerRemoteAccess.ps1",
                  "setup\Test-LedgerRemoteAccess.ps1",
                  "docs\REMOTE-ACCESS.md")
-$recoveryFiles = @("setup\Restore-LedgerBackup.ps1")
+$recoveryFiles = @("setup\Restore-LedgerBackup.ps1",
+                   "setup\Remove-Ledger-Data.ps1",
+                   "setup\Remove-Ledger-Data.cmd")
 # Shipped only with the data-carrying package, because it tells the reader
 # their existing password still works - which is true only when the signing
 # key travels with the records.

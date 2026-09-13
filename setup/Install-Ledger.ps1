@@ -389,6 +389,8 @@ finally:
     foreach ($relative in @("setup\Set-LedgerRemoteAccess.ps1",
                             "setup\Test-LedgerRemoteAccess.ps1",
                             "setup\Restore-LedgerBackup.ps1",
+                            "setup\Remove-Ledger-Data.ps1",
+                            "setup\Remove-Ledger-Data.cmd",
                             "docs\REMOTE-ACCESS.md")) {
         $sourceFile = Join-Path $Source $relative
         if (Test-Path -LiteralPath $sourceFile -PathType Leaf) {
