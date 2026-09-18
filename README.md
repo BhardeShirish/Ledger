@@ -46,22 +46,34 @@ docker run -d --name ledger -p 127.0.0.1:8080:8080 \
 
 Then open <http://localhost:8080>.
 
-## See Ledger
+## See Ledger in action
 
 **Product tour (1 minute 45 seconds)**
+
+See how a restaurant owner records the day, checks incoming payment activity,
+closes cash, and uses the evidence to decide what needs attention next.
 
 https://github.com/user-attachments/assets/cbf9a5e8-cf13-4b48-8539-89fc691bc535
 
 <p align="center">
-  <a href="docs/screenshots/01-home.png">
-    <img src="docs/screenshots/01-home.png" alt="Ledger daily checklist" width="31%">
-  </a>
-  <a href="docs/screenshots/13-statement-import-review.png">
-    <img src="docs/screenshots/13-statement-import-review-overview.png" alt="Ledger statement import review" width="31%">
-  </a>
-  <a href="docs/screenshots/03-cash-close.png">
-    <img src="docs/screenshots/03-cash-close-overview.png" alt="Ledger cash close" width="31%">
-  </a>
+  <strong>Run the whole day from one checklist</strong><br>
+  Attendance, sales, expenses, and cash close stay visible until the day is
+  complete.<br><br>
+  <a href="docs/screenshots/01-home.png"><img src="docs/screenshots/01-home.png" alt="Ledger daily checklist showing the work left to complete" width="82%"></a>
+</p>
+
+<p align="center">
+  <strong>Review Bank, PhonePe, and UPI spending before it becomes an expense</strong><br>
+  Ledger groups payees, suggests categories from history, and flags likely
+  duplicates before anything is booked.<br><br>
+  <a href="docs/screenshots/13-statement-import-review.png"><img src="docs/screenshots/13-statement-import-review-overview.png" alt="Ledger statement import review showing duplicate checks and category status" width="82%"></a>
+</p>
+
+<p align="center">
+  <strong>Close the cash drawer with a real count</strong><br>
+  Compare expected cash with the money counted, explain any difference, and
+  record money moved to the bank.<br><br>
+  <a href="docs/screenshots/03-cash-close.png"><img src="docs/screenshots/03-cash-close-overview.png" alt="Ledger cash close showing expected versus counted cash" width="82%"></a>
 </p>
 
 All screenshots use built-in fictional demo data.
