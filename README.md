@@ -48,6 +48,10 @@ Then open <http://localhost:8080>.
 
 ## See Ledger
 
+**Product tour (1 minute 45 seconds)**
+
+https://github.com/user-attachments/assets/cbf9a5e8-cf13-4b48-8539-89fc691bc535
+
 <p align="center">
   <a href="docs/screenshots/01-home.png">
     <img src="docs/screenshots/01-home.png" alt="Ledger daily checklist" width="31%">
