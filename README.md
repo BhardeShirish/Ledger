@@ -48,8 +48,6 @@ Then open <http://localhost:8080>.
 
 ## See Ledger
 
-[Watch the 1 minute 45 second product tour](docs/showcase/ledger-product-tour.mp4)
-
 <p align="center">
   <a href="docs/screenshots/01-home.png">
     <img src="docs/screenshots/01-home.png" alt="Ledger daily checklist" width="31%">
