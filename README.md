@@ -46,6 +46,24 @@ docker run -d --name ledger -p 127.0.0.1:8080:8080 \
 
 Then open <http://localhost:8080>.
 
+## See Ledger
+
+[Watch the 1 minute 45 second product tour](docs/showcase/ledger-product-tour.mp4)
+
+<p align="center">
+  <a href="docs/screenshots/01-home.png">
+    <img src="docs/screenshots/01-home.png" alt="Ledger daily checklist" width="31%">
+  </a>
+  <a href="docs/screenshots/13-statement-import-review.png">
+    <img src="docs/screenshots/13-statement-import-review-overview.png" alt="Ledger statement import review" width="31%">
+  </a>
+  <a href="docs/screenshots/03-cash-close.png">
+    <img src="docs/screenshots/03-cash-close-overview.png" alt="Ledger cash close" width="31%">
+  </a>
+</p>
+
+All screenshots use built-in fictional demo data.
+
 ## Documentation
 
 - [Complete feature list](docs/FEATURES.md)
